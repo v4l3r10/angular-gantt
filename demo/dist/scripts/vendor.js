@@ -1,5 +1,5 @@
 /**
- * @license AngularJS v1.3.4
+ * @license AngularJS v1.3.7
  * (c) 2010-2014 Google, Inc. http://angularjs.org
  * License: MIT
  */
@@ -54,7 +54,7 @@ function minErr(module, ErrorConstructor) {
       return match;
     });
 
-    message = message + '\nhttp://errors.angularjs.org/1.3.4/' +
+    message = message + '\nhttp://errors.angularjs.org/1.3.7/' +
       (module ? module + '/' : '') + code;
     for (i = 2; i < arguments.length; i++) {
       message = message + (i == 2 ? '?' : '&') + 'p' + (i - 2) + '=' +
@@ -109,6 +109,7 @@ function minErr(module, ErrorConstructor) {
   isWindow: true,
   isScope: true,
   isFile: true,
+  isFormData: true,
   isBlob: true,
   isBoolean: true,
   isPromiseLike: true,
@@ -226,8 +227,8 @@ if ('i' !== 'I'.toLowerCase()) {
 }
 
 
-var /** holds major version number for IE or NaN for real browsers */
-    msie,
+var
+    msie,             // holds major version number for IE, or NaN if UA is not IE.
     jqLite,           // delay binding since jQuery could be loaded after us.
     jQuery,           // delay binding
     slice             = [].slice,
@@ -630,6 +631,11 @@ function isFile(obj) {
 }
 
 
+function isFormData(obj) {
+  return toString.call(obj) === '[object FormData]';
+}
+
+
 function isBlob(obj) {
   return toString.call(obj) === '[object Blob]';
 }
@@ -1028,12 +1034,16 @@ function toJsonReplacer(key, value) {
  * stripped since angular uses this notation internally.
  *
  * @param {Object|Array|Date|string|number} obj Input to be serialized into JSON.
- * @param {boolean=} pretty If set to true, the JSON output will contain newlines and whitespace.
+ * @param {boolean|number=} pretty If set to true, the JSON output will contain newlines and whitespace.
+ *    If set to an integer, the JSON output will contain that many spaces per indentation (the default is 2).
  * @returns {string|undefined} JSON-ified string representing `obj`.
  */
 function toJson(obj, pretty) {
   if (typeof obj === 'undefined') return undefined;
-  return JSON.stringify(obj, toJsonReplacer, pretty ? '  ' : null);
+  if (!isNumber(pretty)) {
+    pretty = pretty ? 2 : null;
+  }
+  return JSON.stringify(obj, toJsonReplacer, pretty);
 }
 
 
@@ -1488,7 +1498,12 @@ function reloadWithDebugInfo() {
  * @param {DOMElement} element DOM element which is the root of angular application.
  */
 function getTestability(rootElement) {
-  return angular.element(rootElement).injector().get('$$testability');
+  var injector = angular.element(rootElement).injector();
+  if (!injector) {
+    throw ngMinErr('test',
+      'no injector found for element argument to getTestability');
+  }
+  return injector.get('$$testability');
 }
 
 var SNAKE_CASE_REGEXP = /[A-Z]/g;
@@ -2081,7 +2096,8 @@ function toDebugString(obj) {
   $TimeoutProvider,
   $$RAFProvider,
   $$AsyncCallbackProvider,
-  $WindowProvider
+  $WindowProvider,
+  $$jqLiteProvider
 */
 
 
@@ -2100,11 +2116,11 @@ function toDebugString(obj) {
  * - `codeName` – `{string}` – Code name of the release, such as "jiggling-armfat".
  */
 var version = {
-  full: '1.3.4',    // all of these placeholder strings will be replaced by grunt's
+  full: '1.3.7',    // all of these placeholder strings will be replaced by grunt's
   major: 1,    // package task
   minor: 3,
-  dot: 4,
-  codeName: 'highfalutin-petroglyph'
+  dot: 7,
+  codeName: 'leaky-obstruction'
 };
 
 
@@ -2234,7 +2250,8 @@ function publishExternalAPI(angular) {
         $timeout: $TimeoutProvider,
         $window: $WindowProvider,
         $$rAF: $$RAFProvider,
-        $$asyncCallback: $$AsyncCallbackProvider
+        $$asyncCallback: $$AsyncCallbackProvider,
+        $$jqLite: $$jqLiteProvider
       });
     }
   ]);
@@ -3244,6 +3261,27 @@ forEach({
   JQLite.prototype.unbind = JQLite.prototype.off;
 });
 
+
+// Provider for private $$jqLite service
+function $$jqLiteProvider() {
+  this.$get = function $$jqLite() {
+    return extend(JQLite, {
+      hasClass: function(node, classes) {
+        if (node.attr) node = node[0];
+        return jqLiteHasClass(node, classes);
+      },
+      addClass: function(node, classes) {
+        if (node.attr) node = node[0];
+        return jqLiteAddClass(node, classes);
+      },
+      removeClass: function(node, classes) {
+        if (node.attr) node = node[0];
+        return jqLiteRemoveClass(node, classes);
+      }
+    });
+  };
+}
+
 /**
  * Computes a hash of an 'obj'.
  * Hash of a:
@@ -3496,6 +3534,7 @@ function annotate(fn, strictDi, name) {
  * Return an instance of the service.
  *
  * @param {string} name The name of the instance to retrieve.
+ * @param {string} caller An optional string to provide the origin of the function call for error messages.
  * @return {*} The instance.
  */
 
@@ -3946,14 +3985,17 @@ function createInjector(modulesToLoad, strictDi) {
           }
       },
       providerInjector = (providerCache.$injector =
-          createInternalInjector(providerCache, function() {
+          createInternalInjector(providerCache, function(serviceName, caller) {
+            if (angular.isString(caller)) {
+              path.push(caller);
+            }
             throw $injectorMinErr('unpr', "Unknown provider: {0}", path.join(' <- '));
           })),
       instanceCache = {},
       instanceInjector = (instanceCache.$injector =
-          createInternalInjector(instanceCache, function(servicename) {
-            var provider = providerInjector.get(servicename + providerSuffix);
-            return instanceInjector.invoke(provider.$get, provider, undefined, servicename);
+          createInternalInjector(instanceCache, function(serviceName, caller) {
+            var provider = providerInjector.get(serviceName + providerSuffix, caller);
+            return instanceInjector.invoke(provider.$get, provider, undefined, serviceName);
           }));
 
 
@@ -3988,7 +4030,7 @@ function createInjector(modulesToLoad, strictDi) {
 
   function enforceReturnValue(name, factory) {
     return function enforcedReturnValue() {
-      var result = instanceInjector.invoke(factory, this, undefined, name);
+      var result = instanceInjector.invoke(factory, this);
       if (isUndefined(result)) {
         throw $injectorMinErr('undef', "Provider '{0}' must return a value from $get factory method.", name);
       }
@@ -4083,7 +4125,7 @@ function createInjector(modulesToLoad, strictDi) {
 
   function createInternalInjector(cache, factory) {
 
-    function getService(serviceName) {
+    function getService(serviceName, caller) {
       if (cache.hasOwnProperty(serviceName)) {
         if (cache[serviceName] === INSTANTIATING) {
           throw $injectorMinErr('cdep', 'Circular dependency found: {0}',
@@ -4094,7 +4136,7 @@ function createInjector(modulesToLoad, strictDi) {
         try {
           path.unshift(serviceName);
           cache[serviceName] = INSTANTIATING;
-          return cache[serviceName] = factory(serviceName);
+          return cache[serviceName] = factory(serviceName, caller);
         } catch (err) {
           if (cache[serviceName] === INSTANTIATING) {
             delete cache[serviceName];
@@ -4126,7 +4168,7 @@ function createInjector(modulesToLoad, strictDi) {
         args.push(
           locals && locals.hasOwnProperty(key)
           ? locals[key]
-          : getService(key)
+          : getService(key, serviceName)
         );
       }
       if (isArray(fn)) {
@@ -4870,6 +4912,11 @@ function Browser(window, document, $log, $sniffer) {
     }
   }
 
+  function getHash(url) {
+    var index = url.indexOf('#');
+    return index === -1 ? '' : url.substr(index + 1);
+  }
+
   /**
    * @private
    * Note: this method is used only by scenario runner
@@ -4999,8 +5046,10 @@ function Browser(window, document, $log, $sniffer) {
         }
         if (replace) {
           location.replace(url);
-        } else {
+        } else if (!sameBase) {
           location.href = url;
+        } else {
+          location.hash = getHash(url);
         }
       }
       return self;
@@ -5779,7 +5828,7 @@ function $TemplateCacheProvider() {
  * #### `multiElement`
  * When this property is set to true, the HTML compiler will collect DOM nodes between
  * nodes with the attributes `directive-name-start` and `directive-name-end`, and group them
- * together as the directive elements. It is recomended that this feature be used on directives
+ * together as the directive elements. It is recommended that this feature be used on directives
  * which are not strictly behavioural (such as {@link ngClick}), and which
  * do not manipulate or replace child nodes (such as {@link ngInclude}).
  *
@@ -6467,7 +6516,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
    * Retrieves or overrides the default regular expression that is used for whitelisting of safe
    * urls during a[href] sanitization.
    *
-   * The sanitization is a security measure aimed at prevent XSS attacks via html links.
+   * The sanitization is a security measure aimed at preventing XSS attacks via html links.
    *
    * Any url about to be assigned to a[href] via data-binding is first normalized and turned into
    * an absolute url. Afterwards, the url is matched against the `aHrefSanitizationWhitelist`
@@ -6534,7 +6583,7 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
    * * `ng-binding` CSS class
    * * `$binding` data property containing an array of the binding expressions
    *
-   * You may want to use this in production for a significant performance boost. See
+   * You may want to disable this in production for a significant performance boost. See
    * {@link guide/production#disabling-debug-data Disabling Debug Data} for more.
    *
    * The default value is true.
@@ -6571,6 +6620,21 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
     };
 
     Attributes.prototype = {
+      /**
+       * @ngdoc method
+       * @name $compile.directive.Attributes#$normalize
+       * @kind function
+       *
+       * @description
+       * Converts an attribute name (e.g. dash/colon/underscore-delimited string, optionally prefixed with `x-` or
+       * `data-`) to its normalized, camelCase form.
+       *
+       * Also there is special case for Moz prefix starting with upper case letter.
+       *
+       * For further information check out the guide on {@link guide/directive#matching-directives Matching Directives}
+       *
+       * @param {string} name Name to normalize
+       */
       $normalize: directiveNormalize,
 
 
@@ -7069,7 +7133,10 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
             // support ngAttr attribute binding
             ngAttrName = directiveNormalize(name);
             if (isNgAttr = NG_ATTR_BINDING.test(ngAttrName)) {
-              name = snake_case(ngAttrName.substr(6), '-');
+              name = name.replace(PREFIX_REGEXP, '')
+                .substr(8).replace(/_(.)/g, function(match, letter) {
+                  return letter.toUpperCase();
+                });
             }
 
             var directiveNName = ngAttrName.replace(/(Start|End)$/, '');
@@ -7981,7 +8048,10 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
 
 
     function addAttrInterpolateDirective(node, directives, value, name, allOrNothing) {
-      var interpolateFn = $interpolate(value, true);
+      var trustedContext = getTrustedContext(node, name);
+      allOrNothing = ALL_OR_NOTHING_ATTRS[name] || allOrNothing;
+
+      var interpolateFn = $interpolate(value, true, trustedContext, allOrNothing);
 
       // no interpolation found -> ignore
       if (!interpolateFn) return;
@@ -8006,15 +8076,15 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
                           "ng- versions (such as ng-click instead of onclick) instead.");
                 }
 
-                // If the attribute was removed, then we are done
-                if (!attr[name]) {
-                  return;
+                // If the attribute has changed since last $interpolate()ed
+                var newValue = attr[name];
+                if (newValue !== value) {
+                  // we need to interpolate again since the attribute value has been updated
+                  // (e.g. by another directive's compile function)
+                  // ensure unset/empty values make interpolateFn falsy
+                  interpolateFn = newValue && $interpolate(newValue, true, trustedContext, allOrNothing);
+                  value = newValue;
                 }
-
-                // we need to interpolate again, in case the attribute value has been updated
-                // (e.g. by another directive's compile function)
-                interpolateFn = $interpolate(attr[name], true, getTrustedContext(node, name),
-                    ALL_OR_NOTHING_ATTRS[name] || allOrNothing);
 
                 // if attribute was updated so that there is no interpolation going on we don't want to
                 // register any observers
@@ -8149,13 +8219,6 @@ function $CompileProvider($provide, $$sanitizeUriProvider) {
 var PREFIX_REGEXP = /^((?:x|data)[\:\-_])/i;
 /**
  * Converts all accepted directives format into proper directive name.
- * All of these will become 'myDirective':
- *   my:Directive
- *   my-directive
- *   x-my-directive
- *   data-my:directive
- *
- * Also there is special case for Moz prefix starting with upper case letter.
  * @param name Name to normalize
  */
 function directiveNormalize(name) {
@@ -8483,21 +8546,32 @@ function $ExceptionHandlerProvider() {
 
 var APPLICATION_JSON = 'application/json';
 var CONTENT_TYPE_APPLICATION_JSON = {'Content-Type': APPLICATION_JSON + ';charset=utf-8'};
-var JSON_START = /^\s*(\[|\{[^\{])/;
-var JSON_END = /[\}\]]\s*$/;
+var JSON_START = /^\[|^\{(?!\{)/;
+var JSON_ENDS = {
+  '[': /]$/,
+  '{': /}$/
+};
 var JSON_PROTECTION_PREFIX = /^\)\]\}',?\n/;
 
 function defaultHttpResponseTransform(data, headers) {
   if (isString(data)) {
-    // strip json vulnerability protection prefix
-    data = data.replace(JSON_PROTECTION_PREFIX, '');
-    var contentType = headers('Content-Type');
-    if ((contentType && contentType.indexOf(APPLICATION_JSON) === 0 && data.trim()) ||
-        (JSON_START.test(data) && JSON_END.test(data))) {
-      data = fromJson(data);
+    // Strip json vulnerability protection prefix and trim whitespace
+    var tempData = data.replace(JSON_PROTECTION_PREFIX, '').trim();
+
+    if (tempData) {
+      var contentType = headers('Content-Type');
+      if ((contentType && (contentType.indexOf(APPLICATION_JSON) === 0)) || isJsonLike(tempData)) {
+        data = fromJson(tempData);
+      }
     }
   }
+
   return data;
+}
+
+function isJsonLike(str) {
+    var jsonStart = str.match(JSON_START);
+    return jsonStart && JSON_ENDS[jsonStart[0]].test(str);
 }
 
 /**
@@ -8562,16 +8636,17 @@ function headersGetter(headers) {
  * This function is used for both request and response transforming
  *
  * @param {*} data Data to transform.
- * @param {function(string=)} headers Http headers getter fn.
+ * @param {function(string=)} headers HTTP headers getter fn.
+ * @param {number} status HTTP status code of the response.
  * @param {(Function|Array.<Function>)} fns Function or an array of functions.
  * @returns {*} Transformed data.
  */
-function transformData(data, headers, fns) {
+function transformData(data, headers, status, fns) {
   if (isFunction(fns))
-    return fns(data, headers);
+    return fns(data, headers, status);
 
   forEach(fns, function(fn) {
-    data = fn(data, headers);
+    data = fn(data, headers, status);
   });
 
   return data;
@@ -8623,7 +8698,7 @@ function $HttpProvider() {
 
     // transform outgoing request data
     transformRequest: [function(d) {
-      return isObject(d) && !isFile(d) && !isBlob(d) ? toJson(d) : d;
+      return isObject(d) && !isFile(d) && !isBlob(d) && !isFormData(d) ? toJson(d) : d;
     }],
 
     // default headers
@@ -8850,7 +8925,7 @@ function $HttpProvider() {
      *
      * Both requests and responses can be transformed using transformation functions: `transformRequest`
      * and `transformResponse`. These properties can be a single function that returns
-     * the transformed value (`{function(data, headersGetter)`) or an array of such transformation functions,
+     * the transformed value (`{function(data, headersGetter, status)`) or an array of such transformation functions,
      * which allows you to `push` or `unshift` a new transformation function into the transformation chain.
      *
      * ### Default Transformations
@@ -9091,12 +9166,14 @@ function $HttpProvider() {
      *      `{function(data, headersGetter)|Array.<function(data, headersGetter)>}` –
      *      transform function or an array of such functions. The transform function takes the http
      *      request body and headers and returns its transformed (typically serialized) version.
-     *      See {@link #overriding-the-default-transformations-per-request Overriding the Default Transformations}
+     *      See {@link ng.$http#overriding-the-default-transformations-per-request
+     *      Overriding the Default Transformations}
      *    - **transformResponse** –
-     *      `{function(data, headersGetter)|Array.<function(data, headersGetter)>}` –
+     *      `{function(data, headersGetter, status)|Array.<function(data, headersGetter, status)>}` –
      *      transform function or an array of such functions. The transform function takes the http
-     *      response body and headers and returns its transformed (typically deserialized) version.
-     *      See {@link #overriding-the-default-transformations-per-request Overriding the Default Transformations}
+     *      response body, headers and status and returns its transformed (typically deserialized) version.
+     *      See {@link ng.$http#overriding-the-default-transformations-per-request
+     *      Overriding the Default Transformations}
      *    - **cache** – `{boolean|Cache}` – If true, a default $http cache will be used to cache the
      *      GET request, otherwise if a cache instance built with
      *      {@link ng.$cacheFactory $cacheFactory}, this cache will be used for
@@ -9217,24 +9294,23 @@ function $HttpProvider() {
 </example>
      */
     function $http(requestConfig) {
-      var config = {
-        method: 'get',
-        transformRequest: defaults.transformRequest,
-        transformResponse: defaults.transformResponse
-      };
-      var headers = mergeHeaders(requestConfig);
 
       if (!angular.isObject(requestConfig)) {
         throw minErr('$http')('badreq', 'Http request configuration must be an object.  Received: {0}', requestConfig);
       }
 
-      extend(config, requestConfig);
-      config.headers = headers;
+      var config = extend({
+        method: 'get',
+        transformRequest: defaults.transformRequest,
+        transformResponse: defaults.transformResponse
+      }, requestConfig);
+
+      config.headers = mergeHeaders(requestConfig);
       config.method = uppercase(config.method);
 
       var serverRequest = function(config) {
-        headers = config.headers;
-        var reqData = transformData(config.data, headersGetter(headers), config.transformRequest);
+        var headers = config.headers;
+        var reqData = transformData(config.data, headersGetter(headers), undefined, config.transformRequest);
 
         // strip content-type if data is undefined
         if (isUndefined(reqData)) {
@@ -9250,7 +9326,7 @@ function $HttpProvider() {
         }
 
         // send request
-        return sendReq(config, reqData, headers).then(transformResponse, transformResponse);
+        return sendReq(config, reqData).then(transformResponse, transformResponse);
       };
 
       var chain = [serverRequest, undefined];
@@ -9295,11 +9371,28 @@ function $HttpProvider() {
         if (!response.data) {
           resp.data = response.data;
         } else {
-          resp.data = transformData(response.data, response.headers, config.transformResponse);
+          resp.data = transformData(response.data, response.headers, response.status, config.transformResponse);
         }
         return (isSuccess(response.status))
           ? resp
           : $q.reject(resp);
+      }
+
+      function executeHeaderFns(headers) {
+        var headerContent, processedHeaders = {};
+
+        forEach(headers, function(headerFn, header) {
+          if (isFunction(headerFn)) {
+            headerContent = headerFn();
+            if (headerContent != null) {
+              processedHeaders[header] = headerContent;
+            }
+          } else {
+            processedHeaders[header] = headerFn;
+          }
+        });
+
+        return processedHeaders;
       }
 
       function mergeHeaders(config) {
@@ -9324,23 +9417,7 @@ function $HttpProvider() {
         }
 
         // execute if header value is a function for merged headers
-        execHeaders(reqHeaders);
-        return reqHeaders;
-
-        function execHeaders(headers) {
-          var headerContent;
-
-          forEach(headers, function(headerFn, header) {
-            if (isFunction(headerFn)) {
-              headerContent = headerFn();
-              if (headerContent != null) {
-                headers[header] = headerContent;
-              } else {
-                delete headers[header];
-              }
-            }
-          });
-        }
+        return executeHeaderFns(reqHeaders);
       }
     }
 
@@ -9483,11 +9560,12 @@ function $HttpProvider() {
      * !!! ACCESSES CLOSURE VARS:
      * $httpBackend, defaults, $log, $rootScope, defaultCache, $http.pendingRequests
      */
-    function sendReq(config, reqData, reqHeaders) {
+    function sendReq(config, reqData) {
       var deferred = $q.defer(),
           promise = deferred.promise,
           cache,
           cachedResp,
+          reqHeaders = config.headers,
           url = buildUrl(config.url, config.params);
 
       $http.pendingRequests.push(config);
@@ -9506,8 +9584,7 @@ function $HttpProvider() {
         if (isDefined(cachedResp)) {
           if (isPromiseLike(cachedResp)) {
             // cached request has already been sent, but there is no response yet
-            cachedResp.then(removePendingReq, removePendingReq);
-            return cachedResp;
+            cachedResp.then(resolvePromiseWithResult, resolvePromiseWithResult);
           } else {
             // serving from cache
             if (isArray(cachedResp)) {
@@ -9585,6 +9662,9 @@ function $HttpProvider() {
         });
       }
 
+      function resolvePromiseWithResult(result) {
+        resolvePromise(result.data, result.status, shallowCopy(result.headers()), result.statusText);
+      }
 
       function removePendingReq() {
         var idx = $http.pendingRequests.indexOf(config);
@@ -9746,7 +9826,9 @@ function createHttpBackend($browser, createXhr, $browserDefer, callbacks, rawDoc
 
     function completeRequest(callback, status, response, headersString, statusText) {
       // cancel timeout and subsequent timeout promise resolution
-      timeoutId && $browserDefer.cancel(timeoutId);
+      if (timeoutId !== undefined) {
+        $browserDefer.cancel(timeoutId);
+      }
       jsonpDone = xhr = null;
 
       callback(status, response, headersString, statusText);
@@ -10194,33 +10276,33 @@ function $IntervalProvider() {
       *             // Don't start a new fight if we are already fighting
       *             if ( angular.isDefined(stop) ) return;
       *
-      *           stop = $interval(function() {
-      *             if ($scope.blood_1 > 0 && $scope.blood_2 > 0) {
-      *               $scope.blood_1 = $scope.blood_1 - 3;
-      *               $scope.blood_2 = $scope.blood_2 - 4;
-      *             } else {
-      *               $scope.stopFight();
+      *             stop = $interval(function() {
+      *               if ($scope.blood_1 > 0 && $scope.blood_2 > 0) {
+      *                 $scope.blood_1 = $scope.blood_1 - 3;
+      *                 $scope.blood_2 = $scope.blood_2 - 4;
+      *               } else {
+      *                 $scope.stopFight();
+      *               }
+      *             }, 100);
+      *           };
+      *
+      *           $scope.stopFight = function() {
+      *             if (angular.isDefined(stop)) {
+      *               $interval.cancel(stop);
+      *               stop = undefined;
       *             }
-      *           }, 100);
-      *         };
+      *           };
       *
-      *         $scope.stopFight = function() {
-      *           if (angular.isDefined(stop)) {
-      *             $interval.cancel(stop);
-      *             stop = undefined;
-      *           }
-      *         };
+      *           $scope.resetFight = function() {
+      *             $scope.blood_1 = 100;
+      *             $scope.blood_2 = 120;
+      *           };
       *
-      *         $scope.resetFight = function() {
-      *           $scope.blood_1 = 100;
-      *           $scope.blood_2 = 120;
-      *         };
-      *
-      *         $scope.$on('$destroy', function() {
-      *           // Make sure that the interval is destroyed too
-      *           $scope.stopFight();
-      *         });
-      *       }])
+      *           $scope.$on('$destroy', function() {
+      *             // Make sure that the interval is destroyed too
+      *             $scope.stopFight();
+      *           });
+      *         }])
       *       // Register the 'myCurrentTime' directive factory method.
       *       // We inject $interval and dateFilter service since the factory method is DI.
       *       .directive('myCurrentTime', ['$interval', 'dateFilter',
@@ -10463,6 +10545,10 @@ function stripHash(url) {
   return index == -1 ? url : url.substr(0, index);
 }
 
+function trimEmptyHash(url) {
+  return url.replace(/(#.+)|#$/, '$1');
+}
+
 
 function stripFile(url) {
   return url.substr(0, stripHash(url).lastIndexOf('/') + 1);
@@ -10574,16 +10660,25 @@ function LocationHashbangUrl(appBase, hashPrefix) {
    */
   this.$$parse = function(url) {
     var withoutBaseUrl = beginsWith(appBase, url) || beginsWith(appBaseNoFile, url);
-    var withoutHashUrl = withoutBaseUrl.charAt(0) == '#'
-        ? beginsWith(hashPrefix, withoutBaseUrl)
-        : (this.$$html5)
-          ? withoutBaseUrl
-          : '';
+    var withoutHashUrl;
 
-    if (!isString(withoutHashUrl)) {
-      throw $locationMinErr('ihshprfx', 'Invalid url "{0}", missing hash prefix "{1}".', url,
-          hashPrefix);
+    if (withoutBaseUrl.charAt(0) === '#') {
+
+      // The rest of the url starts with a hash so we have
+      // got either a hashbang path or a plain hash fragment
+      withoutHashUrl = beginsWith(hashPrefix, withoutBaseUrl);
+      if (isUndefined(withoutHashUrl)) {
+        // There was no hashbang prefix so we just have a hash fragment
+        withoutHashUrl = withoutBaseUrl;
+      }
+
+    } else {
+      // There was no hashbang path nor hash fragment:
+      // If we are in HTML5 mode we use what is left as the path;
+      // Otherwise we ignore what is left
+      withoutHashUrl = this.$$html5 ? withoutBaseUrl : '';
     }
+
     parseAppUrl(withoutHashUrl, this);
 
     this.$$path = removeWindowsDriveName(this.$$path, withoutHashUrl, appBase);
@@ -10946,7 +11041,7 @@ var locationPrototype = {
    *
    *
    * ```js
-   * // given url http://example.com/some/path?foo=bar&baz=xoxo#hashValue
+   * // given url http://example.com/#/some/path?foo=bar&baz=xoxo#hashValue
    * var hash = $location.hash();
    * // => "hashValue"
    * ```
@@ -11170,8 +11265,8 @@ function $LocationProvider() {
    * @param {string=} oldState History state object that was before it was changed.
    */
 
-  this.$get = ['$rootScope', '$browser', '$sniffer', '$rootElement',
-      function($rootScope, $browser, $sniffer, $rootElement) {
+  this.$get = ['$rootScope', '$browser', '$sniffer', '$rootElement', '$window',
+      function($rootScope, $browser, $sniffer, $rootElement, $window) {
     var $location,
         LocationMode,
         baseHref = $browser.baseHref(), // if base[href] is undefined, it defaults to ''
@@ -11253,7 +11348,7 @@ function $LocationProvider() {
           if ($location.absUrl() != $browser.url()) {
             $rootScope.$apply();
             // hack to work around FF6 bug 684208 when scenario runner clicks on links
-            window.angular['ff-684208-preventDefault'] = true;
+            $window.angular['ff-684208-preventDefault'] = true;
           }
         }
       }
@@ -11298,10 +11393,11 @@ function $LocationProvider() {
 
     // update browser
     $rootScope.$watch(function $locationWatch() {
-      var oldUrl = $browser.url();
+      var oldUrl = trimEmptyHash($browser.url());
+      var newUrl = trimEmptyHash($location.absUrl());
       var oldState = $browser.state();
       var currentReplace = $location.$$replace;
-      var urlOrStateChanged = oldUrl !== $location.absUrl() ||
+      var urlOrStateChanged = oldUrl !== newUrl ||
         ($location.$$html5 && $sniffer.history && oldState !== $location.$$state);
 
       if (initializing || urlOrStateChanged) {
@@ -11868,6 +11964,8 @@ Parser.prototype = {
       primary = this.arrayDeclaration();
     } else if (this.expect('{')) {
       primary = this.object();
+    } else if (this.peek().identifier && this.peek().text in CONSTANTS) {
+      primary = CONSTANTS[this.consume().text];
     } else if (this.peek().identifier) {
       primary = this.identifier();
     } else if (this.peek().constant) {
@@ -11970,7 +12068,7 @@ Parser.prototype = {
       id += this.consume().text + this.consume().text;
     }
 
-    return CONSTANTS[id] || getterFn(id, this.options, this.text);
+    return getterFn(id, this.options, this.text);
   },
 
   constant: function() {
@@ -12104,8 +12202,8 @@ Parser.prototype = {
   logicalAND: function() {
     var left = this.equality();
     var token;
-    if ((token = this.expect('&&'))) {
-      left = this.binaryFn(left, token.text, this.logicalAND(), true);
+    while ((token = this.expect('&&'))) {
+      left = this.binaryFn(left, token.text, this.equality(), true);
     }
     return left;
   },
@@ -12113,8 +12211,8 @@ Parser.prototype = {
   equality: function() {
     var left = this.relational();
     var token;
-    if ((token = this.expect('==','!=','===','!=='))) {
-      left = this.binaryFn(left, token.text, this.equality());
+    while ((token = this.expect('==','!=','===','!=='))) {
+      left = this.binaryFn(left, token.text, this.relational());
     }
     return left;
   },
@@ -12122,8 +12220,8 @@ Parser.prototype = {
   relational: function() {
     var left = this.additive();
     var token;
-    if ((token = this.expect('<', '>', '<=', '>='))) {
-      left = this.binaryFn(left, token.text, this.relational());
+    while ((token = this.expect('<', '>', '<=', '>='))) {
+      left = this.binaryFn(left, token.text, this.additive());
     }
     return left;
   },
@@ -12160,17 +12258,16 @@ Parser.prototype = {
   },
 
   fieldAccess: function(object) {
-    var expression = this.text;
-    var field = this.consume().text;
-    var getter = getterFn(field, this.options, expression);
+    var getter = this.identifier();
 
     return extend(function $parseFieldAccess(scope, locals, self) {
-      return getter(self || object(scope, locals));
+      var o = self || object(scope, locals);
+      return (o == null) ? undefined : getter(o);
     }, {
       assign: function(scope, value, locals) {
         var o = object(scope, locals);
         if (!o) object.assign(scope, o = {});
-        return setter(o, field, value, expression);
+        return getter.assign(o, value);
       }
     });
   },
@@ -12215,7 +12312,7 @@ Parser.prototype = {
     var args = argsFn.length ? [] : null;
 
     return function $parseFunctionCall(scope, locals) {
-      var context = contextGetter ? contextGetter(scope, locals) : scope;
+      var context = contextGetter ? contextGetter(scope, locals) : isDefined(contextGetter) ? undefined : scope;
       var fn = fnGetter(scope, locals, context) || noop;
 
       if (args) {
@@ -12228,13 +12325,13 @@ Parser.prototype = {
       ensureSafeObject(context, expressionText);
       ensureSafeFunction(fn, expressionText);
 
-      // IE stupidity! (IE doesn't have apply for some native functions)
+      // IE doesn't have apply for some native functions
       var v = fn.apply
             ? fn.apply(context, args)
             : fn(args[0], args[1], args[2], args[3], args[4]);
 
       return ensureSafeObject(v, expressionText);
-    };
+      };
   },
 
   // This is used with json array declaration
@@ -13328,12 +13425,10 @@ function qFactory(nextTick, exceptionHandler) {
 function $$RAFProvider() { //rAF
   this.$get = ['$window', '$timeout', function($window, $timeout) {
     var requestAnimationFrame = $window.requestAnimationFrame ||
-                                $window.webkitRequestAnimationFrame ||
-                                $window.mozRequestAnimationFrame;
+                                $window.webkitRequestAnimationFrame;
 
     var cancelAnimationFrame = $window.cancelAnimationFrame ||
                                $window.webkitCancelAnimationFrame ||
-                               $window.mozCancelAnimationFrame ||
                                $window.webkitCancelRequestAnimationFrame;
 
     var rafSupported = !!requestAnimationFrame;
@@ -13462,7 +13557,6 @@ function $RootScopeProvider() {
          var child = parent.$new();
 
          parent.salutation = "Hello";
-         child.name = "World";
          expect(child.salutation).toEqual('Hello');
 
          child.salutation = "Welcome";
@@ -14100,7 +14194,7 @@ function $RootScopeProvider() {
           while (asyncQueue.length) {
             try {
               asyncTask = asyncQueue.shift();
-              asyncTask.scope.$eval(asyncTask.expression);
+              asyncTask.scope.$eval(asyncTask.expression, asyncTask.locals);
             } catch (e) {
               $exceptionHandler(e);
             }
@@ -14315,8 +14409,9 @@ function $RootScopeProvider() {
        *    - `string`: execute using the rules as defined in {@link guide/expression expression}.
        *    - `function(scope)`: execute the function with the current `scope` parameter.
        *
+       * @param {(object)=} locals Local variables object, useful for overriding values in scope.
        */
-      $evalAsync: function(expr) {
+      $evalAsync: function(expr, locals) {
         // if we are outside of an $digest loop and this is the first time we are scheduling async
         // task also schedule async auto-flush
         if (!$rootScope.$$phase && !asyncQueue.length) {
@@ -14327,7 +14422,7 @@ function $RootScopeProvider() {
           });
         }
 
-        asyncQueue.push({scope: this, expression: expr});
+        asyncQueue.push({scope: this, expression: expr, locals: locals});
       },
 
       $$postDigest: function(fn) {
@@ -15870,7 +15965,9 @@ function $SnifferProvider() {
         // IE9 implements 'input' event it's so fubared that we rather pretend that it doesn't have
         // it. In particular the event is not fired when backspace or delete key are pressed or
         // when cut operation is performed.
-        if (event == 'input' && msie == 9) return false;
+        // IE10+ implements 'input' event but it erroneously fires under various situations,
+        // e.g. when placeholder changes, or a form is focused.
+        if (event === 'input' && msie <= 11) return false;
 
         if (isUndefined(eventSupport[event])) {
           var divElm = document.createElement('div');
@@ -15916,14 +16013,9 @@ function $TemplateRequestProvider() {
       var transformResponse = $http.defaults && $http.defaults.transformResponse;
 
       if (isArray(transformResponse)) {
-        var original = transformResponse;
-        transformResponse = [];
-        for (var i = 0; i < original.length; ++i) {
-          var transformer = original[i];
-          if (transformer !== defaultHttpResponseTransform) {
-            transformResponse.push(transformer);
-          }
-        }
+        transformResponse = transformResponse.filter(function(transformer) {
+          return transformer !== defaultHttpResponseTransform;
+        });
       } else if (transformResponse === defaultHttpResponseTransform) {
         transformResponse = null;
       }
@@ -15935,18 +16027,16 @@ function $TemplateRequestProvider() {
 
       return $http.get(tpl, httpOptions)
         .then(function(response) {
-          var html = response.data;
           self.totalPendingRequests--;
-          $templateCache.put(tpl, html);
-          return html;
+          return response.data;
         }, handleError);
 
-      function handleError() {
+      function handleError(resp) {
         self.totalPendingRequests--;
         if (!ignoreRequestError) {
           throw $compileMinErr('tpload', 'Failed to load template: {0}', tpl);
         }
-        return $q.reject();
+        return $q.reject(resp);
       }
     }
 
@@ -16569,106 +16659,103 @@ function filterFilter() {
   return function(array, expression, comparator) {
     if (!isArray(array)) return array;
 
-    var comparatorType = typeof(comparator),
-        predicates = [];
+    var predicateFn;
+    var matchAgainstAnyProp;
 
-    predicates.check = function(value, index) {
-      for (var j = 0; j < predicates.length; j++) {
-        if (!predicates[j](value, index)) {
-          return false;
-        }
-      }
-      return true;
-    };
-
-    if (comparatorType !== 'function') {
-      if (comparatorType === 'boolean' && comparator) {
-        comparator = function(obj, text) {
-          return angular.equals(obj, text);
-        };
-      } else {
-        comparator = function(obj, text) {
-          if (obj && text && typeof obj === 'object' && typeof text === 'object') {
-            for (var objKey in obj) {
-              if (objKey.charAt(0) !== '$' && hasOwnProperty.call(obj, objKey) &&
-                  comparator(obj[objKey], text[objKey])) {
-                return true;
-              }
-            }
-            return false;
-          }
-          text = ('' + text).toLowerCase();
-          return ('' + obj).toLowerCase().indexOf(text) > -1;
-        };
-      }
-    }
-
-    var search = function(obj, text) {
-      if (typeof text === 'string' && text.charAt(0) === '!') {
-        return !search(obj, text.substr(1));
-      }
-      switch (typeof obj) {
-        case 'boolean':
-        case 'number':
-        case 'string':
-          return comparator(obj, text);
-        case 'object':
-          switch (typeof text) {
-            case 'object':
-              return comparator(obj, text);
-            default:
-              for (var objKey in obj) {
-                if (objKey.charAt(0) !== '$' && search(obj[objKey], text)) {
-                  return true;
-                }
-              }
-              break;
-          }
-          return false;
-        case 'array':
-          for (var i = 0; i < obj.length; i++) {
-            if (search(obj[i], text)) {
-              return true;
-            }
-          }
-          return false;
-        default:
-          return false;
-      }
-    };
     switch (typeof expression) {
+      case 'function':
+        predicateFn = expression;
+        break;
       case 'boolean':
       case 'number':
       case 'string':
-        // Set up expression object and fall through
-        expression = {$:expression};
-        // jshint -W086
+        matchAgainstAnyProp = true;
+        //jshint -W086
       case 'object':
-        // jshint +W086
-        for (var key in expression) {
-          (function(path) {
-            if (typeof expression[path] === 'undefined') return;
-            predicates.push(function(value) {
-              return search(path == '$' ? value : (value && value[path]), expression[path]);
-            });
-          })(key);
-        }
-        break;
-      case 'function':
-        predicates.push(expression);
+        //jshint +W086
+        predicateFn = createPredicateFn(expression, comparator, matchAgainstAnyProp);
         break;
       default:
         return array;
     }
-    var filtered = [];
-    for (var j = 0; j < array.length; j++) {
-      var value = array[j];
-      if (predicates.check(value, j)) {
-        filtered.push(value);
-      }
-    }
-    return filtered;
+
+    return array.filter(predicateFn);
   };
+}
+
+// Helper functions for `filterFilter`
+function createPredicateFn(expression, comparator, matchAgainstAnyProp) {
+  var predicateFn;
+
+  if (comparator === true) {
+    comparator = equals;
+  } else if (!isFunction(comparator)) {
+    comparator = function(actual, expected) {
+      if (isObject(actual) || isObject(expected)) {
+        // Prevent an object to be considered equal to a string like `'[object'`
+        return false;
+      }
+
+      actual = lowercase('' + actual);
+      expected = lowercase('' + expected);
+      return actual.indexOf(expected) !== -1;
+    };
+  }
+
+  predicateFn = function(item) {
+    return deepCompare(item, expression, comparator, matchAgainstAnyProp);
+  };
+
+  return predicateFn;
+}
+
+function deepCompare(actual, expected, comparator, matchAgainstAnyProp) {
+  var actualType = typeof actual;
+  var expectedType = typeof expected;
+
+  if ((expectedType === 'string') && (expected.charAt(0) === '!')) {
+    return !deepCompare(actual, expected.substring(1), comparator, matchAgainstAnyProp);
+  } else if (actualType === 'array') {
+    // In case `actual` is an array, consider it a match
+    // if ANY of it's items matches `expected`
+    return actual.some(function(item) {
+      return deepCompare(item, expected, comparator, matchAgainstAnyProp);
+    });
+  }
+
+  switch (actualType) {
+    case 'object':
+      var key;
+      if (matchAgainstAnyProp) {
+        for (key in actual) {
+          if ((key.charAt(0) !== '$') && deepCompare(actual[key], expected, comparator)) {
+            return true;
+          }
+        }
+        return false;
+      } else if (expectedType === 'object') {
+        for (key in expected) {
+          var expectedVal = expected[key];
+          if (isFunction(expectedVal)) {
+            continue;
+          }
+
+          var keyIsDollar = key === '$';
+          var actualVal = keyIsDollar ? actual : actual[key];
+          if (!deepCompare(actualVal, expectedVal, comparator, keyIsDollar)) {
+            return false;
+          }
+        }
+        return true;
+      } else {
+        return comparator(actual, expected);
+      }
+      break;
+    case 'function':
+      return false;
+    default:
+      return comparator(actual, expected);
+  }
 }
 
 /**
@@ -16821,7 +16908,6 @@ function formatNumber(number, pattern, groupSep, decimalSep, fractionSize) {
   if (numStr.indexOf('e') !== -1) {
     var match = numStr.match(/([\d\.]+)e(-?)(\d+)/);
     if (match && match[2] == '-' && match[3] > fractionSize + 1) {
-      numStr = '0';
       number = 0;
     } else {
       formatedText = numStr;
@@ -16841,10 +16927,6 @@ function formatNumber(number, pattern, groupSep, decimalSep, fractionSize) {
     // inspired by:
     // https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Math/round
     number = +(Math.round(+(number.toString() + 'e' + fractionSize)).toString() + 'e' + -fractionSize);
-
-    if (number === 0) {
-      isNegative = false;
-    }
 
     var fraction = ('' + number).split(DECIMAL_SEP);
     var whole = fraction[0];
@@ -16878,10 +16960,14 @@ function formatNumber(number, pattern, groupSep, decimalSep, fractionSize) {
 
     if (fractionSize && fractionSize !== "0") formatedText += decimalSep + fraction.substr(0, fractionSize);
   } else {
-
-    if (fractionSize > 0 && number > -1 && number < 1) {
+    if (fractionSize > 0 && number < 1) {
       formatedText = number.toFixed(fractionSize);
+      number = parseFloat(formatedText);
     }
+  }
+
+  if (number === 0) {
+    isNegative = false;
   }
 
   parts.push(isNegative ? pattern.negPre : pattern.posPre,
@@ -17028,8 +17114,8 @@ var DATE_FORMATS_SPLIT = /((?:[^yMdHhmsaZEw']+)|(?:'(?:[^']|'')*')|(?:E+|y+|M+|d
  *   * `'.sss' or ',sss'`: Millisecond in second, padded (000-999)
  *   * `'a'`: AM/PM marker
  *   * `'Z'`: 4 digit (+sign) representation of the timezone offset (-1200-+1200)
- *   * `'ww'`: ISO-8601 week of year (00-53)
- *   * `'w'`: ISO-8601 week of year (0-53)
+ *   * `'ww'`: Week of year, padded (00-53). Week 01 is the week with the first Thursday of the year
+ *   * `'w'`: Week of year (0-53). Week 1 is the week with the first Thursday of the year
  *
  *   `format` string can also be one of the following predefined
  *   {@link guide/i18n localizable formats}:
@@ -17173,25 +17259,31 @@ function dateFilter($locale) {
  *   the binding is automatically converted to JSON.
  *
  * @param {*} object Any JavaScript object (including arrays and primitive types) to filter.
+ * @param {number=} spacing The number of spaces to use per indentation, defaults to 2.
  * @returns {string} JSON string.
  *
  *
  * @example
    <example>
      <file name="index.html">
-       <pre>{{ {'name':'value'} | json }}</pre>
+       <pre id="default-spacing">{{ {'name':'value'} | json }}</pre>
+       <pre id="custom-spacing">{{ {'name':'value'} | json:4 }}</pre>
      </file>
      <file name="protractor.js" type="protractor">
        it('should jsonify filtered objects', function() {
-         expect(element(by.binding("{'name':'value'}")).getText()).toMatch(/\{\n  "name": ?"value"\n}/);
+         expect(element(by.id('default-spacing')).getText()).toMatch(/\{\n  "name": ?"value"\n}/);
+         expect(element(by.id('custom-spacing')).getText()).toMatch(/\{\n    "name": ?"value"\n}/);
        });
      </file>
    </example>
  *
  */
 function jsonFilter() {
-  return function(object) {
-    return toJson(object, true);
+  return function(object, spacing) {
+    if (isUndefined(spacing)) {
+        spacing = 2;
+    }
+    return toJson(object, spacing);
   };
 }
 
@@ -17508,15 +17600,40 @@ function orderByFilter($parse) {
           ? function(a, b) {return comp(b,a);}
           : comp;
     }
+
+    function isPrimitive(value) {
+      switch (typeof value) {
+        case 'number': /* falls through */
+        case 'boolean': /* falls through */
+        case 'string':
+          return true;
+        default:
+          return false;
+      }
+    }
+
+    function objectToString(value) {
+      if (value === null) return 'null';
+      if (typeof value.toString === 'function') {
+        value = value.toString();
+        if (isPrimitive(value)) return value;
+      }
+      if (typeof value.valueOf === 'function') {
+        value = value.valueOf();
+        if (isPrimitive(value)) return value;
+      }
+      return '';
+    }
+
     function compare(v1, v2) {
       var t1 = typeof v1;
       var t2 = typeof v2;
-      if (t1 == t2) {
-        if (isDate(v1) && isDate(v2)) {
-          v1 = v1.valueOf();
-          v2 = v2.valueOf();
-        }
-        if (t1 == "string") {
+      if (t1 === t2 && t1 === "object") {
+        v1 = objectToString(v1);
+        v2 = objectToString(v2);
+      }
+      if (t1 === t2) {
+        if (t1 === "string") {
            v1 = v1.toLowerCase();
            v2 = v2.toLowerCase();
         }
@@ -17582,9 +17699,8 @@ var htmlAnchorDirective = valueFn({
  * make the link go to the wrong URL if the user clicks it before
  * Angular has a chance to replace the `{{hash}}` markup with its
  * value. Until Angular replaces the markup the link will be broken
- * and will most likely return a 404 error.
- *
- * The `ngHref` directive solves this problem.
+ * and will most likely return a 404 error. The `ngHref` directive
+ * solves this problem.
  *
  * The wrong way to write it:
  * ```html
@@ -19466,7 +19582,6 @@ function textInputType(scope, element, attr, ctrl, $sniffer, $browser) {
 }
 
 function baseInputType(scope, element, attr, ctrl, $sniffer, $browser) {
-  var placeholder = element[0].placeholder, noevent = {};
   var type = lowercase(element[0].type);
 
   // In composition mode, users are still inputing intermediate text buffer,
@@ -19486,18 +19601,13 @@ function baseInputType(scope, element, attr, ctrl, $sniffer, $browser) {
   }
 
   var listener = function(ev) {
+    if (timeout) {
+      $browser.defer.cancel(timeout);
+      timeout = null;
+    }
     if (composing) return;
     var value = element.val(),
         event = ev && ev.type;
-
-    // IE (11 and under) seem to emit an 'input' event if the placeholder value changes.
-    // We don't want to dirty the value when this happens, so we abort here. Unfortunately,
-    // IE also sends input events for other non-input-related things, (such as focusing on a
-    // form control), so this change is not entirely enough to solve this.
-    if (msie && (ev || noevent).type === 'input' && element[0].placeholder !== placeholder) {
-      placeholder = element[0].placeholder;
-      return;
-    }
 
     // By default we will trim the value
     // If the attribute ng-trim exists we will avoid trimming
@@ -19521,11 +19631,13 @@ function baseInputType(scope, element, attr, ctrl, $sniffer, $browser) {
   } else {
     var timeout;
 
-    var deferListener = function(ev) {
+    var deferListener = function(ev, input, origValue) {
       if (!timeout) {
         timeout = $browser.defer(function() {
-          listener(ev);
           timeout = null;
+          if (!input || input.value !== origValue) {
+            listener(ev);
+          }
         });
       }
     };
@@ -19537,7 +19649,7 @@ function baseInputType(scope, element, attr, ctrl, $sniffer, $browser) {
       //    command            modifiers                   arrows
       if (key === 91 || (15 < key && key < 19) || (37 <= key && key <= 40)) return;
 
-      deferListener(event);
+      deferListener(event, this, this.value);
     });
 
     // if user modifies input value using context menu in IE, we need "paste" and "cut" events to catch it
@@ -20712,11 +20824,15 @@ var NgModelController = ['$scope', '$exceptionHandler', '$attrs', '$element', '$
     var prevModelValue = ctrl.$modelValue;
     var allowInvalid = ctrl.$options && ctrl.$options.allowInvalid;
     ctrl.$$rawModelValue = modelValue;
+
     if (allowInvalid) {
       ctrl.$modelValue = modelValue;
       writeToModelIfNeeded();
     }
-    ctrl.$$runValidators(parserValid, modelValue, viewValue, function(allValid) {
+
+    // Pass the $$lastCommittedViewValue here, because the cached viewValue might be out of date.
+    // This can happen if e.g. $setViewValue is called from inside a parser
+    ctrl.$$runValidators(parserValid, modelValue, ctrl.$$lastCommittedViewValue, function(allValid) {
       if (!allowInvalid) {
         // Note: Don't check ctrl.$valid here, as we could have
         // external validators (e.g. calculated on the server),
@@ -24248,7 +24364,7 @@ var ngRepeatDirective = ['$parse', '$animate', function($parse, $animate) {
       var aliasAs = match[3];
       var trackByExp = match[4];
 
-      match = lhs.match(/^(?:([\$\w]+)|\(([\$\w]+)\s*,\s*([\$\w]+)\))$/);
+      match = lhs.match(/^(?:(\s*[\$\w]+)|\(\s*([\$\w]+)\s*,\s*([\$\w]+)\s*\))$/);
 
       if (!match) {
         throw ngRepeatMinErr('iidexp', "'_item_' in '_item_ in _collection_' should be an identifier or '(_key_, _value_)' expression, but got '{0}'.",
@@ -25058,7 +25174,7 @@ var ngSwitchDefaultDirective = ngDirective({
          }]);
        </script>
        <div ng-controller="ExampleController">
-         <input ng-model="title"><br>
+         <input ng-model="title"> <br/>
          <textarea ng-model="text"></textarea> <br/>
          <pane title="{{title}}">{{text}}</pane>
        </div>
@@ -25136,7 +25252,6 @@ var scriptDirective = ['$templateCache', function($templateCache) {
     compile: function(element, attr) {
       if (attr.type == 'text/ng-template') {
         var templateUrl = attr.id,
-            // IE is not consistent, in scripts we have to read .text but in other nodes we have to read .textContent
             text = element[0].text;
 
         $templateCache.put(templateUrl, text);
@@ -25187,9 +25302,9 @@ var ngOptionsMinErr = minErr('ngOptions');
  * or property name (for object data sources) of the value within the collection. If a `track by` expression
  * is used, the result of that expression will be set as the value of the `option` and `select` elements.
  *
- * ### `select as` with `trackexpr`
+ * ### `select as` with `track by`
  *
- * Using `select as` together with `trackexpr` is not recommended. Reasoning:
+ * Using `select as` together with `track by` is not recommended. Reasoning:
  *
  * - Example: &lt;select ng-options="item.subItem as item.label for item in values track by item.id" ng-model="selected"&gt;
  *   values: [{id: 1, label: 'aLabel', subItem: {name: 'aSubItem'}}, {id: 2, label: 'bLabel', subItem: {name: 'bSubItem'}}],
@@ -25214,8 +25329,10 @@ var ngOptionsMinErr = minErr('ngOptions');
  *   * for array data sources:
  *     * `label` **`for`** `value` **`in`** `array`
  *     * `select` **`as`** `label` **`for`** `value` **`in`** `array`
- *     * `label`  **`group by`** `group` **`for`** `value` **`in`** `array`
- *     * `select` **`as`** `label` **`group by`** `group` **`for`** `value` **`in`** `array` **`track by`** `trackexpr`
+ *     * `label` **`group by`** `group` **`for`** `value` **`in`** `array`
+ *     * `label` **`group by`** `group` **`for`** `value` **`in`** `array` **`track by`** `trackexpr`
+ *     * `label` **`for`** `value` **`in`** `array` | orderBy:`orderexpr` **`track by`** `trackexpr`
+ *        (for including a filter with `track by`)
  *   * for object data sources:
  *     * `label` **`for (`**`key` **`,`** `value`**`) in`** `object`
  *     * `select` **`as`** `label` **`for (`**`key` **`,`** `value`**`) in`** `object`
@@ -25357,7 +25474,7 @@ var selectDirective = ['$compile', '$parse', function($compile,   $parse) {
       self.removeOption = function(value) {
         if (this.hasOption(value)) {
           delete optionsMap[value];
-          if (ngModelCtrl.$viewValue == value) {
+          if (ngModelCtrl.$viewValue === value) {
             this.renderUnknownOption(value);
           }
         }
@@ -25824,18 +25941,23 @@ var selectDirective = ['$compile', '$parse', function($compile,   $parse) {
               updateLabelMap(labelMap, option.label, false);
               option.element.remove();
             }
-            forEach(labelMap, function(count, label) {
-              if (count > 0) {
-                selectCtrl.addOption(label);
-              } else if (count < 0) {
-                selectCtrl.removeOption(label);
-              }
-            });
           }
           // remove any excessive OPTGROUPs from select
           while (optionGroupsCache.length > groupIndex) {
-            optionGroupsCache.pop()[0].element.remove();
+            // remove all the labels in the option group
+            optionGroup = optionGroupsCache.pop();
+            for (index = 1; index < optionGroup.length; ++index) {
+              updateLabelMap(labelMap, optionGroup[index].label, false);
+            }
+            optionGroup[0].element.remove();
           }
+          forEach(labelMap, function(count, label) {
+            if (count > 0) {
+              selectCtrl.addOption(label);
+            } else if (count < 0) {
+              selectCtrl.removeOption(label);
+            }
+          });
         }
       }
     }
@@ -25914,7 +26036,7 @@ var styleDirective = valueFn({
 
 !window.angular.$$csp() && window.angular.element(document).find('head').prepend('<style type="text/css">@charset "UTF-8";[ng\\:cloak],[ng-cloak],[data-ng-cloak],[x-ng-cloak],.ng-cloak,.x-ng-cloak,.ng-hide:not(.ng-hide-animate){display:none !important;}ng\\:form{display:block;}</style>');
 /**
- * @license AngularJS v1.3.4
+ * @license AngularJS v1.3.7
  * (c) 2010-2014 Google, Inc. http://angularjs.org
  * License: MIT
  */
@@ -25934,7 +26056,7 @@ var styleDirective = valueFn({
  * # Usage
  *
  * To see animations in action, all that is required is to define the appropriate CSS classes
- * or to register a JavaScript animation via the myModule.animation() function. The directives that support animation automatically are:
+ * or to register a JavaScript animation via the `myModule.animation()` function. The directives that support animation automatically are:
  * `ngRepeat`, `ngInclude`, `ngIf`, `ngSwitch`, `ngShow`, `ngHide`, `ngView` and `ngClass`. Custom directives can take advantage of animation
  * by using the `$animate` service.
  *
@@ -26076,8 +26198,8 @@ var styleDirective = valueFn({
  * ### Structural transition animations
  *
  * Structural transitions (such as enter, leave and move) will always apply a `0s none` transition
- * value to force the browser into rendering the styles defined in the setup (.ng-enter, .ng-leave
- * or .ng-move) class. This means that any active transition animations operating on the element
+ * value to force the browser into rendering the styles defined in the setup (`.ng-enter`, `.ng-leave`
+ * or `.ng-move`) class. This means that any active transition animations operating on the element
  * will be cut off to make way for the enter, leave or move animation.
  *
  * ### Class-based transition animations
@@ -26394,11 +26516,12 @@ angular.module('ngAnimate', ['ng'])
     function isMatchingElement(elm1, elm2) {
       return extractElementNode(elm1) == extractElementNode(elm2);
     }
-
+    var $$jqLite;
     $provide.decorator('$animate',
-        ['$delegate', '$$q', '$injector', '$sniffer', '$rootElement', '$$asyncCallback', '$rootScope', '$document', '$templateRequest',
- function($delegate,   $$q,   $injector,   $sniffer,   $rootElement,   $$asyncCallback,   $rootScope,   $document,   $templateRequest) {
+        ['$delegate', '$$q', '$injector', '$sniffer', '$rootElement', '$$asyncCallback', '$rootScope', '$document', '$templateRequest', '$$jqLite',
+ function($delegate,   $$q,   $injector,   $sniffer,   $rootElement,   $$asyncCallback,   $rootScope,   $document,   $templateRequest,   $$$jqLite) {
 
+      $$jqLite = $$$jqLite;
       $rootElement.data(NG_ANIMATE_STATE, rootAnimateState);
 
       // Wait until all directive and route-related templates are downloaded and
@@ -26792,22 +26915,22 @@ angular.module('ngAnimate', ['ng'])
          *
          * Below is a breakdown of each step that occurs during the `animate` animation:
          *
-         * | Animation Step                                                                                                    | What the element class attribute looks like                |
-         * |-------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
-         * | 1. $animate.animate(...) is called                                                                                | class="my-animation"                                       |
-         * | 2. $animate waits for the next digest to start the animation                                                      | class="my-animation ng-animate"                            |
-         * | 3. $animate runs the JavaScript-defined animations detected on the element                                        | class="my-animation ng-animate"                            |
-         * | 4. the className class value is added to the element                                                              | class="my-animation ng-animate className"                  |
-         * | 5. $animate scans the element styles to get the CSS transition/animation duration and delay                       | class="my-animation ng-animate className"                  |
-         * | 6. $animate blocks all CSS transitions on the element to ensure the .className class styling is applied right away| class="my-animation ng-animate className"                  |
-         * | 7. $animate applies the provided collection of `from` CSS styles to the element                                   | class="my-animation ng-animate className"                  |
-         * | 8. $animate waits for a single animation frame (this performs a reflow)                                           | class="my-animation ng-animate className"                  |
-         * | 9. $animate removes the CSS transition block placed on the element                                                | class="my-animation ng-animate className"                  |
-         * | 10. the className-active class is added (this triggers the CSS transition/animation)                              | class="my-animation ng-animate className className-active" |
-         * | 11. $animate applies the collection of `to` CSS styles to the element which are then handled by the transition    | class="my-animation ng-animate className className-active" |
-         * | 12. $animate waits for the animation to complete (via events and timeout)                                         | class="my-animation ng-animate className className-active" |
-         * | 13. The animation ends and all generated CSS classes are removed from the element                                 | class="my-animation"                                       |
-         * | 14. The returned promise is resolved.                                                                             | class="my-animation"                                       |
+         * | Animation Step                                                                                                        | What the element class attribute looks like                  |
+         * |-----------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------|
+         * | 1. `$animate.animate(...)` is called                                                                                  | `class="my-animation"`                                       |
+         * | 2. `$animate` waits for the next digest to start the animation                                                        | `class="my-animation ng-animate"`                            |
+         * | 3. `$animate` runs the JavaScript-defined animations detected on the element                                          | `class="my-animation ng-animate"`                            |
+         * | 4. the `className` class value is added to the element                                                                | `class="my-animation ng-animate className"`                  |
+         * | 5. `$animate` scans the element styles to get the CSS transition/animation duration and delay                         | `class="my-animation ng-animate className"`                  |
+         * | 6. `$animate` blocks all CSS transitions on the element to ensure the `.className` class styling is applied right away| `class="my-animation ng-animate className"`                  |
+         * | 7. `$animate` applies the provided collection of `from` CSS styles to the element                                     | `class="my-animation ng-animate className"`                  |
+         * | 8. `$animate` waits for a single animation frame (this performs a reflow)                                             | `class="my-animation ng-animate className"`                  |
+         * | 9. `$animate` removes the CSS transition block placed on the element                                                  | `class="my-animation ng-animate className"`                  |
+         * | 10. the `className-active` class is added (this triggers the CSS transition/animation)                                | `class="my-animation ng-animate className className-active"` |
+         * | 11. `$animate` applies the collection of `to` CSS styles to the element which are then handled by the transition      | `class="my-animation ng-animate className className-active"` |
+         * | 12. `$animate` waits for the animation to complete (via events and timeout)                                           | `class="my-animation ng-animate className className-active"` |
+         * | 13. The animation ends and all generated CSS classes are removed from the element                                     | `class="my-animation"`                                       |
+         * | 14. The returned promise is resolved.                                                                                 | `class="my-animation"`                                       |
          *
          * @param {DOMElement} element the element that will be the focus of the enter animation
          * @param {object} from a collection of CSS styles that will be applied to the element at the start of the animation
@@ -26838,21 +26961,21 @@ angular.module('ngAnimate', ['ng'])
          *
          * Below is a breakdown of each step that occurs during enter animation:
          *
-         * | Animation Step                                                                                                    | What the element class attribute looks like              |
-         * |-------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------|
-         * | 1. $animate.enter(...) is called                                                                                  | class="my-animation"                                     |
-         * | 2. element is inserted into the parentElement element or beside the afterElement element                          | class="my-animation"                                     |
-         * | 3. $animate waits for the next digest to start the animation                                                      | class="my-animation ng-animate"                          |
-         * | 4. $animate runs the JavaScript-defined animations detected on the element                                        | class="my-animation ng-animate"                          |
-         * | 5. the .ng-enter class is added to the element                                                                    | class="my-animation ng-animate ng-enter"                 |
-         * | 6. $animate scans the element styles to get the CSS transition/animation duration and delay                       | class="my-animation ng-animate ng-enter"                 |
-         * | 7. $animate blocks all CSS transitions on the element to ensure the .ng-enter class styling is applied right away | class="my-animation ng-animate ng-enter"                 |
-         * | 8. $animate waits for a single animation frame (this performs a reflow)                                           | class="my-animation ng-animate ng-enter"                 |
-         * | 9. $animate removes the CSS transition block placed on the element                                                | class="my-animation ng-animate ng-enter"                 |
-         * | 10. the .ng-enter-active class is added (this triggers the CSS transition/animation)                              | class="my-animation ng-animate ng-enter ng-enter-active" |
-         * | 11. $animate waits for the animation to complete (via events and timeout)                                         | class="my-animation ng-animate ng-enter ng-enter-active" |
-         * | 12. The animation ends and all generated CSS classes are removed from the element                                 | class="my-animation"                                     |
-         * | 13. The returned promise is resolved.                                                                             | class="my-animation"                                     |
+         * | Animation Step                                                                                                        | What the element class attribute looks like                |
+         * |-----------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
+         * | 1. `$animate.enter(...)` is called                                                                                    | `class="my-animation"`                                     |
+         * | 2. element is inserted into the `parentElement` element or beside the `afterElement` element                          | `class="my-animation"`                                     |
+         * | 3. `$animate` waits for the next digest to start the animation                                                        | `class="my-animation ng-animate"`                          |
+         * | 4. `$animate` runs the JavaScript-defined animations detected on the element                                          | `class="my-animation ng-animate"`                          |
+         * | 5. the `.ng-enter` class is added to the element                                                                      | `class="my-animation ng-animate ng-enter"`                 |
+         * | 6. `$animate` scans the element styles to get the CSS transition/animation duration and delay                         | `class="my-animation ng-animate ng-enter"`                 |
+         * | 7. `$animate` blocks all CSS transitions on the element to ensure the `.ng-enter` class styling is applied right away | `class="my-animation ng-animate ng-enter"`                 |
+         * | 8. `$animate` waits for a single animation frame (this performs a reflow)                                             | `class="my-animation ng-animate ng-enter"`                 |
+         * | 9. `$animate` removes the CSS transition block placed on the element                                                  | `class="my-animation ng-animate ng-enter"`                 |
+         * | 10. the `.ng-enter-active` class is added (this triggers the CSS transition/animation)                                | `class="my-animation ng-animate ng-enter ng-enter-active"` |
+         * | 11. `$animate` waits for the animation to complete (via events and timeout)                                           | `class="my-animation ng-animate ng-enter ng-enter-active"` |
+         * | 12. The animation ends and all generated CSS classes are removed from the element                                     | `class="my-animation"`                                     |
+         * | 13. The returned promise is resolved.                                                                                 | `class="my-animation"`                                     |
          *
          * @param {DOMElement} element the element that will be the focus of the enter animation
          * @param {DOMElement} parentElement the parent element of the element that will be the focus of the enter animation
@@ -26884,21 +27007,21 @@ angular.module('ngAnimate', ['ng'])
          *
          * Below is a breakdown of each step that occurs during leave animation:
          *
-         * | Animation Step                                                                                                    | What the element class attribute looks like              |
-         * |-------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------|
-         * | 1. $animate.leave(...) is called                                                                                  | class="my-animation"                                     |
-         * | 2. $animate runs the JavaScript-defined animations detected on the element                                        | class="my-animation ng-animate"                          |
-         * | 3. $animate waits for the next digest to start the animation                                                      | class="my-animation ng-animate"                          |
-         * | 4. the .ng-leave class is added to the element                                                                    | class="my-animation ng-animate ng-leave"                 |
-         * | 5. $animate scans the element styles to get the CSS transition/animation duration and delay                       | class="my-animation ng-animate ng-leave"                 |
-         * | 6. $animate blocks all CSS transitions on the element to ensure the .ng-leave class styling is applied right away | class="my-animation ng-animate ng-leave"                 |
-         * | 7. $animate waits for a single animation frame (this performs a reflow)                                           | class="my-animation ng-animate ng-leave"                 |
-         * | 8. $animate removes the CSS transition block placed on the element                                                | class="my-animation ng-animate ng-leave"                 |
-         * | 9. the .ng-leave-active class is added (this triggers the CSS transition/animation)                               | class="my-animation ng-animate ng-leave ng-leave-active" |
-         * | 10. $animate waits for the animation to complete (via events and timeout)                                         | class="my-animation ng-animate ng-leave ng-leave-active" |
-         * | 11. The animation ends and all generated CSS classes are removed from the element                                 | class="my-animation"                                     |
-         * | 12. The element is removed from the DOM                                                                           | ...                                                      |
-         * | 13. The returned promise is resolved.                                                                             | ...                                                      |
+         * | Animation Step                                                                                                        | What the element class attribute looks like                |
+         * |-----------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------|
+         * | 1. `$animate.leave(...)` is called                                                                                    | `class="my-animation"`                                     |
+         * | 2. `$animate` runs the JavaScript-defined animations detected on the element                                          | `class="my-animation ng-animate"`                          |
+         * | 3. `$animate` waits for the next digest to start the animation                                                        | `class="my-animation ng-animate"`                          |
+         * | 4. the `.ng-leave` class is added to the element                                                                      | `class="my-animation ng-animate ng-leave"`                 |
+         * | 5. `$animate` scans the element styles to get the CSS transition/animation duration and delay                         | `class="my-animation ng-animate ng-leave"`                 |
+         * | 6. `$animate` blocks all CSS transitions on the element to ensure the `.ng-leave` class styling is applied right away | `class="my-animation ng-animate ng-leave"`                 |
+         * | 7. `$animate` waits for a single animation frame (this performs a reflow)                                             | `class="my-animation ng-animate ng-leave"`                 |
+         * | 8. `$animate` removes the CSS transition block placed on the element                                                  | `class="my-animation ng-animate ng-leave"`                 |
+         * | 9. the `.ng-leave-active` class is added (this triggers the CSS transition/animation)                                 | `class="my-animation ng-animate ng-leave ng-leave-active"` |
+         * | 10. `$animate` waits for the animation to complete (via events and timeout)                                           | `class="my-animation ng-animate ng-leave ng-leave-active"` |
+         * | 11. The animation ends and all generated CSS classes are removed from the element                                     | `class="my-animation"`                                     |
+         * | 12. The element is removed from the DOM                                                                               | ...                                                        |
+         * | 13. The returned promise is resolved.                                                                                 | ...                                                        |
          *
          * @param {DOMElement} element the element that will be the focus of the leave animation
          * @param {object=} options an optional collection of styles that will be picked up by the CSS transition/animation
@@ -26929,21 +27052,21 @@ angular.module('ngAnimate', ['ng'])
          *
          * Below is a breakdown of each step that occurs during move animation:
          *
-         * | Animation Step                                                                                                   | What the element class attribute looks like            |
-         * |------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------|
-         * | 1. $animate.move(...) is called                                                                                  | class="my-animation"                                   |
-         * | 2. element is moved into the parentElement element or beside the afterElement element                            | class="my-animation"                                   |
-         * | 3. $animate waits for the next digest to start the animation                                                     | class="my-animation ng-animate"                        |
-         * | 4. $animate runs the JavaScript-defined animations detected on the element                                       | class="my-animation ng-animate"                        |
-         * | 5. the .ng-move class is added to the element                                                                    | class="my-animation ng-animate ng-move"                |
-         * | 6. $animate scans the element styles to get the CSS transition/animation duration and delay                      | class="my-animation ng-animate ng-move"                |
-         * | 7. $animate blocks all CSS transitions on the element to ensure the .ng-move class styling is applied right away | class="my-animation ng-animate ng-move"                |
-         * | 8. $animate waits for a single animation frame (this performs a reflow)                                          | class="my-animation ng-animate ng-move"                |
-         * | 9. $animate removes the CSS transition block placed on the element                                               | class="my-animation ng-animate ng-move"                |
-         * | 10. the .ng-move-active class is added (this triggers the CSS transition/animation)                              | class="my-animation ng-animate ng-move ng-move-active" |
-         * | 11. $animate waits for the animation to complete (via events and timeout)                                        | class="my-animation ng-animate ng-move ng-move-active" |
-         * | 12. The animation ends and all generated CSS classes are removed from the element                                | class="my-animation"                                   |
-         * | 13. The returned promise is resolved.                                                                            | class="my-animation"                                   |
+         * | Animation Step                                                                                                       | What the element class attribute looks like              |
+         * |----------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------|
+         * | 1. `$animate.move(...)` is called                                                                                    | `class="my-animation"`                                   |
+         * | 2. element is moved into the parentElement element or beside the afterElement element                                | `class="my-animation"`                                   |
+         * | 3. `$animate` waits for the next digest to start the animation                                                       | `class="my-animation ng-animate"`                        |
+         * | 4. `$animate` runs the JavaScript-defined animations detected on the element                                         | `class="my-animation ng-animate"`                        |
+         * | 5. the `.ng-move` class is added to the element                                                                      | `class="my-animation ng-animate ng-move"`                |
+         * | 6. `$animate` scans the element styles to get the CSS transition/animation duration and delay                        | `class="my-animation ng-animate ng-move"`                |
+         * | 7. `$animate` blocks all CSS transitions on the element to ensure the `.ng-move` class styling is applied right away | `class="my-animation ng-animate ng-move"`                |
+         * | 8. `$animate` waits for a single animation frame (this performs a reflow)                                            | `class="my-animation ng-animate ng-move"`                |
+         * | 9. `$animate` removes the CSS transition block placed on the element                                                 | `class="my-animation ng-animate ng-move"`                |
+         * | 10. the `.ng-move-active` class is added (this triggers the CSS transition/animation)                                | `class="my-animation ng-animate ng-move ng-move-active"` |
+         * | 11. `$animate` waits for the animation to complete (via events and timeout)                                          | `class="my-animation ng-animate ng-move ng-move-active"` |
+         * | 12. The animation ends and all generated CSS classes are removed from the element                                    | `class="my-animation"`                                   |
+         * | 13. The returned promise is resolved.                                                                                | `class="my-animation"`                                   |
          *
          * @param {DOMElement} element the element that will be the focus of the move animation
          * @param {DOMElement} parentElement the parentElement element of the element that will be the focus of the move animation
@@ -26977,18 +27100,18 @@ angular.module('ngAnimate', ['ng'])
          *
          * Below is a breakdown of each step that occurs during addClass animation:
          *
-         * | Animation Step                                                                                     | What the element class attribute looks like                      |
-         * |----------------------------------------------------------------------------------------------------|------------------------------------------------------------------|
-         * | 1. $animate.addClass(element, 'super') is called                                                   | class="my-animation"                                             |
-         * | 2. $animate runs the JavaScript-defined animations detected on the element                         | class="my-animation ng-animate"                                  |
-         * | 3. the .super-add class is added to the element                                                    | class="my-animation ng-animate super-add"                        |
-         * | 4. $animate waits for a single animation frame (this performs a reflow)                            | class="my-animation ng-animate super-add"                        |
-         * | 5. the .super and .super-add-active classes are added (this triggers the CSS transition/animation) | class="my-animation ng-animate super super-add super-add-active" |
-         * | 6. $animate scans the element styles to get the CSS transition/animation duration and delay        | class="my-animation ng-animate super super-add super-add-active" |
-         * | 7. $animate waits for the animation to complete (via events and timeout)                           | class="my-animation ng-animate super super-add super-add-active" |
-         * | 8. The animation ends and all generated CSS classes are removed from the element                   | class="my-animation super"                                       |
-         * | 9. The super class is kept on the element                                                          | class="my-animation super"                                       |
-         * | 10. The returned promise is resolved.                                                              | class="my-animation super"                                       |
+         * | Animation Step                                                                                         | What the element class attribute looks like                        |
+         * |--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+         * | 1. `$animate.addClass(element, 'super')` is called                                                     | `class="my-animation"`                                             |
+         * | 2. `$animate` runs the JavaScript-defined animations detected on the element                           | `class="my-animation ng-animate"`                                  |
+         * | 3. the `.super-add` class is added to the element                                                      | `class="my-animation ng-animate super-add"`                        |
+         * | 4. `$animate` waits for a single animation frame (this performs a reflow)                              | `class="my-animation ng-animate super-add"`                        |
+         * | 5. the `.super` and `.super-add-active` classes are added (this triggers the CSS transition/animation) | `class="my-animation ng-animate super super-add super-add-active"` |
+         * | 6. `$animate` scans the element styles to get the CSS transition/animation duration and delay          | `class="my-animation ng-animate super super-add super-add-active"` |
+         * | 7. `$animate` waits for the animation to complete (via events and timeout)                             | `class="my-animation ng-animate super super-add super-add-active"` |
+         * | 8. The animation ends and all generated CSS classes are removed from the element                       | `class="my-animation super"`                                       |
+         * | 9. The super class is kept on the element                                                              | `class="my-animation super"`                                       |
+         * | 10. The returned promise is resolved.                                                                  | `class="my-animation super"`                                       |
          *
          * @param {DOMElement} element the element that will be animated
          * @param {string} className the CSS class that will be added to the element and then animated
@@ -27011,17 +27134,17 @@ angular.module('ngAnimate', ['ng'])
          *
          * Below is a breakdown of each step that occurs during removeClass animation:
          *
-         * | Animation Step                                                                                                   | What the element class attribute looks like                      |
-         * |------------------------------------------------------------------------------------------------------------------|------------------------------------------------------------------|
-         * | 1. $animate.removeClass(element, 'super') is called                                                              | class="my-animation super"                                       |
-         * | 2. $animate runs the JavaScript-defined animations detected on the element                                       | class="my-animation super ng-animate"                            |
-         * | 3. the .super-remove class is added to the element                                                               | class="my-animation super ng-animate super-remove"               |
-         * | 4. $animate waits for a single animation frame (this performs a reflow)                                          | class="my-animation super ng-animate super-remove"               |
-         * | 5. the .super-remove-active classes are added and .super is removed (this triggers the CSS transition/animation) | class="my-animation ng-animate super-remove super-remove-active" |
-         * | 6. $animate scans the element styles to get the CSS transition/animation duration and delay                      | class="my-animation ng-animate super-remove super-remove-active" |
-         * | 7. $animate waits for the animation to complete (via events and timeout)                                         | class="my-animation ng-animate super-remove super-remove-active" |
-         * | 8. The animation ends and all generated CSS classes are removed from the element                                 | class="my-animation"                                             |
-         * | 9. The returned promise is resolved.                                                                             | class="my-animation"                                             |
+         * | Animation Step                                                                                                       | What the element class attribute looks like                        |
+         * |----------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+         * | 1. `$animate.removeClass(element, 'super')` is called                                                                | `class="my-animation super"`                                       |
+         * | 2. `$animate` runs the JavaScript-defined animations detected on the element                                         | `class="my-animation super ng-animate"`                            |
+         * | 3. the `.super-remove` class is added to the element                                                                 | `class="my-animation super ng-animate super-remove"`               |
+         * | 4. `$animate` waits for a single animation frame (this performs a reflow)                                            | `class="my-animation super ng-animate super-remove"`               |
+         * | 5. the `.super-remove-active` classes are added and `.super` is removed (this triggers the CSS transition/animation) | `class="my-animation ng-animate super-remove super-remove-active"` |
+         * | 6. `$animate` scans the element styles to get the CSS transition/animation duration and delay                        | `class="my-animation ng-animate super-remove super-remove-active"` |
+         * | 7. `$animate` waits for the animation to complete (via events and timeout)                                           | `class="my-animation ng-animate super-remove super-remove-active"` |
+         * | 8. The animation ends and all generated CSS classes are removed from the element                                     | `class="my-animation"`                                             |
+         * | 9. The returned promise is resolved.                                                                                 | `class="my-animation"`                                             |
          *
          *
          * @param {DOMElement} element the element that will be animated
@@ -27039,19 +27162,19 @@ angular.module('ngAnimate', ['ng'])
          * @name $animate#setClass
          *
          * @description Adds and/or removes the given CSS classes to and from the element.
-         * Once complete, the done() callback will be fired (if provided).
+         * Once complete, the `done()` callback will be fired (if provided).
          *
-         * | Animation Step                                                                                                                       | What the element class attribute looks like                                          |
-         * |--------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------|
-         * | 1. $animate.setClass(element, 'on', 'off') is called                                                                                 | class="my-animation off"                                                             |
-         * | 2. $animate runs the JavaScript-defined animations detected on the element                                                           | class="my-animation ng-animate off"                                                  |
-         * | 3. the .on-add and .off-remove classes are added to the element                                                                      | class="my-animation ng-animate on-add off-remove off"                                |
-         * | 4. $animate waits for a single animation frame (this performs a reflow)                                                              | class="my-animation ng-animate on-add off-remove off"                                |
-         * | 5. the .on, .on-add-active and .off-remove-active classes are added and .off is removed (this triggers the CSS transition/animation) | class="my-animation ng-animate on on-add on-add-active off-remove off-remove-active" |
-         * | 6. $animate scans the element styles to get the CSS transition/animation duration and delay                                          | class="my-animation ng-animate on on-add on-add-active off-remove off-remove-active" |
-         * | 7. $animate waits for the animation to complete (via events and timeout)                                                             | class="my-animation ng-animate on on-add on-add-active off-remove off-remove-active" |
-         * | 8. The animation ends and all generated CSS classes are removed from the element                                                     | class="my-animation on"                                                              |
-         * | 9. The returned promise is resolved.                                                                                                 | class="my-animation on"                                                              |
+         * | Animation Step                                                                                                                               | What the element class attribute looks like                                            |
+         * |----------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------|
+         * | 1. `$animate.setClass(element, 'on', 'off')` is called                                                                                       | `class="my-animation off"`                                                             |
+         * | 2. `$animate` runs the JavaScript-defined animations detected on the element                                                                 | `class="my-animation ng-animate off"`                                                  |
+         * | 3. the `.on-add` and `.off-remove` classes are added to the element                                                                          | `class="my-animation ng-animate on-add off-remove off"`                                |
+         * | 4. `$animate` waits for a single animation frame (this performs a reflow)                                                                    | `class="my-animation ng-animate on-add off-remove off"`                                |
+         * | 5. the `.on`, `.on-add-active` and `.off-remove-active` classes are added and `.off` is removed (this triggers the CSS transition/animation) | `class="my-animation ng-animate on on-add on-add-active off-remove off-remove-active"` |
+         * | 6. `$animate` scans the element styles to get the CSS transition/animation duration and delay                                                | `class="my-animation ng-animate on on-add on-add-active off-remove off-remove-active"` |
+         * | 7. `$animate` waits for the animation to complete (via events and timeout)                                                                   | `class="my-animation ng-animate on on-add on-add-active off-remove off-remove-active"` |
+         * | 8. The animation ends and all generated CSS classes are removed from the element                                                             | `class="my-animation on"`                                                              |
+         * | 9. The returned promise is resolved.                                                                                                         | `class="my-animation on"`                                                              |
          *
          * @param {DOMElement} element the element which will have its CSS classes changed
          *   removed from it
@@ -27189,7 +27312,7 @@ angular.module('ngAnimate', ['ng'])
         all animations call this shared animation triggering function internally.
         The animationEvent variable refers to the JavaScript animation event that will be triggered
         and the className value is the name of the animation that will be applied within the
-        CSS code. Element, parentElement and afterElement are provided DOM elements for the animation
+        CSS code. Element, `parentElement` and `afterElement` are provided DOM elements for the animation
         and the onComplete callback will be fired once the animation is fully complete.
       */
       function performAnimation(animationEvent, className, element, parentElement, afterElement, domOperation, options, doneCallback) {
@@ -27301,10 +27424,10 @@ angular.module('ngAnimate', ['ng'])
 
         //the ng-animate class does nothing, but it's here to allow for
         //parent animations to find and cancel child animations when needed
-        element.addClass(NG_ANIMATE_CLASS_NAME);
+        $$jqLite.addClass(element, NG_ANIMATE_CLASS_NAME);
         if (options && options.tempClasses) {
           forEach(options.tempClasses, function(className) {
-            element.addClass(className);
+            $$jqLite.addClass(element, className);
           });
         }
 
@@ -27382,7 +27505,7 @@ angular.module('ngAnimate', ['ng'])
             closeAnimation.hasBeenRun = true;
             if (options && options.tempClasses) {
               forEach(options.tempClasses, function(className) {
-                element.removeClass(className);
+                $$jqLite.removeClass(element, className);
               });
             }
 
@@ -27444,7 +27567,7 @@ angular.module('ngAnimate', ['ng'])
           }
 
           if (removeAnimations || !data.totalActive) {
-            element.removeClass(NG_ANIMATE_CLASS_NAME);
+            $$jqLite.removeClass(element, NG_ANIMATE_CLASS_NAME);
             element.removeData(NG_ANIMATE_STATE);
           }
         }
@@ -27685,14 +27808,14 @@ angular.module('ngAnimate', ['ng'])
           var staggerCacheKey = cacheKey + ' ' + staggerClassName;
           var applyClasses = !lookupCache[staggerCacheKey];
 
-          applyClasses && element.addClass(staggerClassName);
+          applyClasses && $$jqLite.addClass(element, staggerClassName);
 
           stagger = getElementAnimationDetails(element, staggerCacheKey);
 
-          applyClasses && element.removeClass(staggerClassName);
+          applyClasses && $$jqLite.removeClass(element, staggerClassName);
         }
 
-        element.addClass(className);
+        $$jqLite.addClass(element, className);
 
         var formerData = element.data(NG_ANIMATE_CSS_DATA_KEY) || {};
         var timings = getElementAnimationDetails(element, eventCacheKey);
@@ -27700,7 +27823,7 @@ angular.module('ngAnimate', ['ng'])
         var animationDuration = timings.animationDuration;
 
         if (structural && transitionDuration === 0 && animationDuration === 0) {
-          element.removeClass(className);
+          $$jqLite.removeClass(element, className);
           return false;
         }
 
@@ -27772,7 +27895,7 @@ angular.module('ngAnimate', ['ng'])
         }
 
         if (!staggerTime) {
-          element.addClass(activeClassName);
+          $$jqLite.addClass(element, activeClassName);
           if (elementData.blockTransition) {
             blockTransitions(node, false);
           }
@@ -27782,7 +27905,7 @@ angular.module('ngAnimate', ['ng'])
         var timings = getElementAnimationDetails(element, eventCacheKey);
         var maxDuration = Math.max(timings.transitionDuration, timings.animationDuration);
         if (maxDuration === 0) {
-          element.removeClass(activeClassName);
+          $$jqLite.removeClass(element, activeClassName);
           animateClose(element, className);
           activeAnimationComplete();
           return;
@@ -27817,7 +27940,7 @@ angular.module('ngAnimate', ['ng'])
 
         var staggerTimeout;
         if (staggerTime > 0) {
-          element.addClass(pendingClassName);
+          $$jqLite.addClass(element, pendingClassName);
           staggerTimeout = $timeout(function() {
             staggerTimeout = null;
 
@@ -27828,8 +27951,8 @@ angular.module('ngAnimate', ['ng'])
               blockAnimations(node, false);
             }
 
-            element.addClass(activeClassName);
-            element.removeClass(pendingClassName);
+            $$jqLite.addClass(element, activeClassName);
+            $$jqLite.removeClass(element, pendingClassName);
 
             if (styles) {
               if (timings.transitionDuration === 0) {
@@ -27856,8 +27979,8 @@ angular.module('ngAnimate', ['ng'])
         // timeout done method.
         function onEnd() {
           element.off(css3AnimationEvents, onAnimationProgress);
-          element.removeClass(activeClassName);
-          element.removeClass(pendingClassName);
+          $$jqLite.removeClass(element, activeClassName);
+          $$jqLite.removeClass(element, pendingClassName);
           if (staggerTimeout) {
             $timeout.cancel(staggerTimeout);
           }
@@ -27945,7 +28068,7 @@ angular.module('ngAnimate', ['ng'])
       }
 
       function animateClose(element, className) {
-        element.removeClass(className);
+        $$jqLite.removeClass(element, className);
         var data = element.data(NG_ANIMATE_CSS_DATA_KEY);
         if (data) {
           if (data.running) {
@@ -32971,8 +33094,7 @@ angular.module("ang-drag-drop",[])
         '$dragImage',
         function ($parse, $rootScope, $dragImage) {
             return function (scope, element, attrs) {
-                var dragData = "",
-                    isDragHandleUsed = false,
+                var isDragHandleUsed = false,
                     dragHandleClass,
                     draggingClass = attrs.draggingClass || "on-dragging",
                     dragTarget;
@@ -32988,12 +33110,6 @@ angular.module("ang-drag-drop",[])
                     }
 
                 });
-
-                if (attrs.drag) {
-                    scope.$watch(attrs.drag, function (newValue) {
-                        dragData = newValue || "";
-                    });
-                }
 
                 if (angular.isString(attrs.dragHandleClass)) {
                     isDragHandleUsed = true;
@@ -33028,45 +33144,51 @@ angular.module("ang-drag-drop",[])
                     element.removeClass(draggingClass);
                 }
 
+	            function dragstartHandler(e) {
+		            var isDragAllowed = !isDragHandleUsed || dragTarget.classList.contains(dragHandleClass);
+
+		            if (isDragAllowed) {
+			            var sendChannel = attrs.dragChannel || "defaultchannel";
+			            var dragData = "";
+			            if (attrs.drag) {
+				            dragData = scope.$eval(attrs.drag);
+			            }
+			            var sendData = angular.toJson({ data: dragData, channel: sendChannel });
+			            var dragImage = attrs.dragImage || null;
+
+			            element.addClass(draggingClass);
+			            element.bind('$destroy', dragendHandler);
+
+			            if (dragImage) {
+				            var dragImageFn = $parse(attrs.dragImage);
+				            scope.$apply(function() {
+					            var dragImageParameters = dragImageFn(scope, {$event: e});
+					            if (dragImageParameters) {
+						            if (angular.isString(dragImageParameters)) {
+							            dragImageParameters = $dragImage.generate(dragImageParameters);
+						            }
+						            if (dragImageParameters.image) {
+							            var xOffset = dragImageParameters.xOffset || 0,
+							                yOffset = dragImageParameters.yOffset || 0;
+							            e.dataTransfer.setDragImage(dragImageParameters.image, xOffset, yOffset);
+						            }
+					            }
+				            });
+			            }
+
+			            e.dataTransfer.setData("dataToSend", sendData);
+			            currentData = angular.fromJson(sendData);
+			            e.dataTransfer.effectAllowed = "copyMove";
+			            $rootScope.$broadcast("ANGULAR_DRAG_START", sendChannel, currentData.data);
+		            }
+		            else {
+			            e.preventDefault();
+		            }
+	            }
+
                 element.bind("dragend", dragendHandler);
 
-                element.bind("dragstart", function (e) {
-                    var isDragAllowed = !isDragHandleUsed || dragTarget.classList.contains(dragHandleClass);
-
-                    if (isDragAllowed) {
-                        var sendChannel = attrs.dragChannel || "defaultchannel";
-                        var sendData = angular.toJson({ data: dragData, channel: sendChannel });
-                        var dragImage = attrs.dragImage || null;
-
-                        element.addClass(draggingClass);
-                        element.bind('$destroy', dragendHandler);
-
-                        if (dragImage) {
-                            var dragImageFn = $parse(attrs.dragImage);
-                            scope.$evalAsync(function() {
-                                var dragImageParameters = dragImageFn(scope, {$event: e});
-                                if (dragImageParameters) {
-                                    if (angular.isString(dragImageParameters)) {
-                                        dragImageParameters = $dragImage.generate(dragImageParameters);
-                                    }
-                                    if (dragImageParameters.image) {
-                                        var xOffset = dragImageParameters.xOffset || 0,
-                                            yOffset = dragImageParameters.yOffset || 0;
-                                        e.dataTransfer.setDragImage(dragImageParameters.image, xOffset, yOffset);
-                                    }
-                                }
-                            });
-                        }
-
-                        e.dataTransfer.setData("dataToSend", sendData);
-                        currentData = angular.fromJson(sendData);
-                        e.dataTransfer.effectAllowed = "copyMove";
-                        $rootScope.$broadcast("ANGULAR_DRAG_START", sendChannel, currentData.data);
-                    }
-                    else {
-                        e.preventDefault();
-                    }
-                });
+                element.bind("dragstart", dragstartHandler);
             };
         }
     ])
@@ -33320,6 +33442,1250 @@ angular.module("ang-drag-drop",[])
     ]);
 
 }(angular));
+
+/**
+ * @license Angular UI Tree v2.1.5
+ * (c) 2010-2014. https://github.com/JimLiu/angular-ui-tree
+ * License: MIT
+ */
+(function () {
+  'use strict';
+
+  angular.module('ui.tree', [])
+    .constant('treeConfig', {
+      treeClass: 'angular-ui-tree',
+      emptyTreeClass: 'angular-ui-tree-empty',
+      hiddenClass: 'angular-ui-tree-hidden',
+      nodesClass: 'angular-ui-tree-nodes',
+      nodeClass: 'angular-ui-tree-node',
+      handleClass: 'angular-ui-tree-handle',
+      placeHolderClass: 'angular-ui-tree-placeholder',
+      dragClass: 'angular-ui-tree-drag',
+      dragThreshold: 3,
+      levelThreshold: 30
+    });
+
+})();
+
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+
+   /**
+    * @ngdoc service
+    * @name ui.tree.service:$helper
+    * @requires ng.$document
+    * @requires ng.$window
+    *
+    * @description
+    * angular-ui-tree.
+    */
+    .factory('$uiTreeHelper', ['$document', '$window',
+      function ($document, $window) {
+        return {
+
+          /**
+           * A hashtable used to storage data of nodes
+           * @type {Object}
+           */
+          nodesData: {
+          },
+
+          setNodeAttribute: function(scope, attrName, val) {
+            var data = this.nodesData[scope.$modelValue.$$hashKey];
+            if (!data) {
+              data = {};
+              this.nodesData[scope.$modelValue.$$hashKey] = data;
+            }
+            data[attrName] = val;
+          },
+
+          getNodeAttribute: function(scope, attrName) {
+            var data = this.nodesData[scope.$modelValue.$$hashKey];
+            if (data) {
+              return data[attrName];
+            }
+            return null;
+          },
+
+          /**
+           * @ngdoc method
+           * @methodOf ui.tree.service:$nodrag
+           * @param  {Object} targetElm angular element
+           * @return {Bool} check if the node can be dragged.
+           */
+          nodrag: function (targetElm) {
+            return (typeof targetElm.attr('data-nodrag')) != "undefined";
+          },
+
+          /**
+           * get the event object for touchs
+           * @param  {[type]} e [description]
+           * @return {[type]}   [description]
+           */
+          eventObj: function(e) {
+            var obj = e;
+            if (e.targetTouches !== undefined) {
+              obj = e.targetTouches.item(0);
+            } else if (e.originalEvent !== undefined && e.originalEvent.targetTouches !== undefined) {
+              obj = e.originalEvent.targetTouches.item(0);
+            }
+            return obj;
+          },
+
+          dragInfo: function(node) {
+            return {
+              source: node,
+              sourceInfo: {
+                nodeScope: node,
+                index: node.index(),
+                nodesScope: node.$parentNodesScope
+              },
+              index: node.index(),
+              siblings: node.siblings().slice(0),
+              parent: node.$parentNodesScope,
+
+              moveTo: function(parent, siblings, index) { // Move the node to a new position
+                this.parent = parent;
+                this.siblings = siblings.slice(0);
+                var i = this.siblings.indexOf(this.source); // If source node is in the target nodes
+                if (i > -1) {
+                  this.siblings.splice(i, 1);
+                  if (this.source.index() < index) {
+                    index--;
+                  }
+                }
+                this.siblings.splice(index, 0, this.source);
+                this.index = index;
+              },
+
+              parentNode: function() {
+                return this.parent.$nodeScope;
+              },
+
+              prev: function() {
+                if (this.index > 0) {
+                  return this.siblings[this.index - 1];
+                }
+                return null;
+              },
+
+              next: function() {
+                if (this.index < this.siblings.length - 1) {
+                  return this.siblings[this.index + 1];
+                }
+                return null;
+              },
+
+              isDirty: function() {
+                return this.source.$parentNodesScope != this.parent ||
+                        this.source.index() != this.index;
+              },
+
+              eventArgs: function(elements, pos) {
+                return {
+                  source: this.sourceInfo,
+                  dest: {
+                    index: this.index,
+                    nodesScope: this.parent
+                  },
+                  elements: elements,
+                  pos: pos
+                };
+              },
+
+              apply: function() {
+                var nodeData = this.source.$modelValue;
+                this.source.remove();
+                this.parent.insertNode(this.index, nodeData);
+              }
+            };
+          },
+
+          /**
+          * @ngdoc method
+          * @name hippo.theme#height
+          * @methodOf ui.tree.service:$helper
+          *
+          * @description
+          * Get the height of an element.
+          *
+          * @param {Object} element Angular element.
+          * @returns {String} Height
+          */
+          height: function (element) {
+            return element.prop('scrollHeight');
+          },
+
+          /**
+          * @ngdoc method
+          * @name hippo.theme#width
+          * @methodOf ui.tree.service:$helper
+          *
+          * @description
+          * Get the width of an element.
+          *
+          * @param {Object} element Angular element.
+          * @returns {String} Width
+          */
+          width: function (element) {
+            return element.prop('scrollWidth');
+          },
+
+          /**
+          * @ngdoc method
+          * @name hippo.theme#offset
+          * @methodOf ui.nestedSortable.service:$helper
+          *
+          * @description
+          * Get the offset values of an element.
+          *
+          * @param {Object} element Angular element.
+          * @returns {Object} Object with properties width, height, top and left
+          */
+          offset: function (element) {
+            var boundingClientRect = element[0].getBoundingClientRect();
+
+            return {
+                width: element.prop('offsetWidth'),
+                height: element.prop('offsetHeight'),
+                top: boundingClientRect.top + ($window.pageYOffset || $document[0].body.scrollTop || $document[0].documentElement.scrollTop),
+                left: boundingClientRect.left + ($window.pageXOffset || $document[0].body.scrollLeft  || $document[0].documentElement.scrollLeft)
+              };
+          },
+
+          /**
+          * @ngdoc method
+          * @name hippo.theme#positionStarted
+          * @methodOf ui.tree.service:$helper
+          *
+          * @description
+          * Get the start position of the target element according to the provided event properties.
+          *
+          * @param {Object} e Event
+          * @param {Object} target Target element
+          * @returns {Object} Object with properties offsetX, offsetY, startX, startY, nowX and dirX.
+          */
+          positionStarted: function (e, target) {
+            var pos = {};
+            pos.offsetX = e.pageX - this.offset(target).left;
+            pos.offsetY = e.pageY - this.offset(target).top;
+            pos.startX = pos.lastX = e.pageX;
+            pos.startY = pos.lastY = e.pageY;
+            pos.nowX = pos.nowY = pos.distX = pos.distY = pos.dirAx = 0;
+            pos.dirX = pos.dirY = pos.lastDirX = pos.lastDirY = pos.distAxX = pos.distAxY = 0;
+            return pos;
+          },
+
+          positionMoved: function (e, pos, firstMoving) {
+            // mouse position last events
+            pos.lastX = pos.nowX;
+            pos.lastY = pos.nowY;
+
+            // mouse position this events
+            pos.nowX  = e.pageX;
+            pos.nowY  = e.pageY;
+
+            // distance mouse moved between events
+            pos.distX = pos.nowX - pos.lastX;
+            pos.distY = pos.nowY - pos.lastY;
+
+            // direction mouse was moving
+            pos.lastDirX = pos.dirX;
+            pos.lastDirY = pos.dirY;
+
+            // direction mouse is now moving (on both axis)
+            pos.dirX = pos.distX === 0 ? 0 : pos.distX > 0 ? 1 : -1;
+            pos.dirY = pos.distY === 0 ? 0 : pos.distY > 0 ? 1 : -1;
+
+            // axis mouse is now moving on
+            var newAx   = Math.abs(pos.distX) > Math.abs(pos.distY) ? 1 : 0;
+
+            // do nothing on first move
+            if (firstMoving) {
+              pos.dirAx  = newAx;
+              pos.moving = true;
+              return;
+            }
+
+            // calc distance moved on this axis (and direction)
+            if (pos.dirAx !== newAx) {
+              pos.distAxX = 0;
+              pos.distAxY = 0;
+            } else {
+              pos.distAxX += Math.abs(pos.distX);
+              if (pos.dirX !== 0 && pos.dirX !== pos.lastDirX) {
+                pos.distAxX = 0;
+              }
+
+              pos.distAxY += Math.abs(pos.distY);
+              if (pos.dirY !== 0 && pos.dirY !== pos.lastDirY) {
+                pos.distAxY = 0;
+              }
+            }
+
+            pos.dirAx = newAx;
+          }
+        };
+      }
+    ]);
+
+})();
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+
+    .controller('TreeController', ['$scope', '$element', '$attrs', 'treeConfig',
+      function ($scope, $element, $attrs, treeConfig) {
+        this.scope = $scope;
+
+        $scope.$element = $element;
+        $scope.$nodesScope = null; // root nodes
+        $scope.$type = 'uiTree';
+        $scope.$emptyElm = null;
+        $scope.$callbacks = null;
+
+        $scope.dragEnabled = true;
+        $scope.emptyPlaceHolderEnabled = true;
+        $scope.maxDepth = 0;
+        $scope.dragDelay = 0;
+
+        // Check if it's a empty tree
+        $scope.isEmpty = function() {
+          return ($scope.$nodesScope && $scope.$nodesScope.$modelValue
+            && $scope.$nodesScope.$modelValue.length === 0);
+        };
+
+        // add placeholder to empty tree
+        $scope.place = function(placeElm) {
+          $scope.$nodesScope.$element.append(placeElm);
+          $scope.$emptyElm.remove();
+        };
+
+        $scope.resetEmptyElement = function() {
+          if ($scope.$nodesScope.$modelValue.length === 0 &&
+            $scope.emptyPlaceHolderEnabled) {
+            $element.append($scope.$emptyElm);
+          } else {
+            $scope.$emptyElm.remove();
+          }
+        };
+
+        var collapseOrExpand = function(scope, collapsed) {
+          var nodes = scope.childNodes();
+          for (var i = 0; i < nodes.length; i++) {
+            collapsed ? nodes[i].collapse() : nodes[i].expand();
+            var subScope = nodes[i].$childNodesScope;
+            if (subScope) {
+              collapseOrExpand(subScope, collapsed);
+            }
+          }
+        };
+
+        $scope.collapseAll = function() {
+          collapseOrExpand($scope.$nodesScope, true);
+        };
+
+        $scope.expandAll = function() {
+          collapseOrExpand($scope.$nodesScope, false);
+        };
+
+      }
+    ]);
+})();
+
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+
+    .controller('TreeNodesController', ['$scope', '$element', 'treeConfig',
+      function ($scope, $element, treeConfig) {
+        this.scope = $scope;
+
+        $scope.$element = $element;
+        $scope.$modelValue = null;
+        $scope.$nodeScope = null; // the scope of node which the nodes belongs to
+        $scope.$treeScope = null;
+        $scope.$type = 'uiTreeNodes';
+        $scope.$nodesMap = {};
+
+        $scope.nodrop = false;
+        $scope.maxDepth = 0;
+
+        $scope.initSubNode = function(subNode) {
+          $scope.$nodesMap[subNode.$modelValue.$$hashKey] = subNode;
+        };
+
+        $scope.destroySubNode = function(subNode) {
+          $scope.$nodesMap[subNode.$modelValue.$$hashKey] = null;
+        };
+
+        $scope.accept = function(sourceNode, destIndex) {
+          return $scope.$treeScope.$callbacks.accept(sourceNode, $scope, destIndex);
+        };
+
+        $scope.beforeDrag = function(sourceNode) {
+          return $scope.$treeScope.$callbacks.beforeDrag(sourceNode);
+        };
+
+        $scope.isParent = function(node) {
+          return node.$parentNodesScope == $scope;
+        };
+
+        $scope.hasChild = function() {
+          return $scope.$modelValue.length > 0;
+        };
+
+        $scope.safeApply = function(fn) {
+          var phase = this.$root.$$phase;
+          if(phase == '$apply' || phase == '$digest') {
+            if(fn && (typeof(fn) === 'function')) {
+              fn();
+            }
+          } else {
+            this.$apply(fn);
+          }
+        };
+
+        $scope.removeNode = function(node) {
+          var index = $scope.$modelValue.indexOf(node.$modelValue);
+          if (index > -1) {
+            $scope.safeApply(function() {
+              $scope.$modelValue.splice(index, 1)[0];
+            });
+            return node;
+          }
+          return null;
+        };
+
+        $scope.insertNode = function(index, nodeData) {
+          $scope.safeApply(function() {
+            $scope.$modelValue.splice(index, 0, nodeData);
+          });
+        };
+
+        $scope.childNodes = function() {
+          var nodes = [];
+          if ($scope.$modelValue) {
+            for (var i = 0; i < $scope.$modelValue.length; i++) {
+              nodes.push($scope.$nodesMap[$scope.$modelValue[i].$$hashKey]);
+            }
+          }
+          return nodes;
+        };
+
+        $scope.depth = function() {
+          if ($scope.$nodeScope) {
+            return $scope.$nodeScope.depth();
+          }
+          return 0; // if it has no $nodeScope, it's root
+        };
+
+        // check if depth limit has reached
+        $scope.outOfDepth = function(sourceNode) {
+          var maxDepth = $scope.maxDepth || $scope.$treeScope.maxDepth;
+          if (maxDepth > 0) {
+            return $scope.depth() + sourceNode.maxSubDepth() + 1 > maxDepth;
+          }
+          return false;
+        };
+
+      }
+    ]);
+})();
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+
+    .controller('TreeNodeController', ['$scope', '$element', '$attrs', 'treeConfig',
+      function ($scope, $element, $attrs, treeConfig) {
+        this.scope = $scope;
+
+        $scope.$element = $element;
+        $scope.$modelValue = null; // Model value for node;
+        $scope.$parentNodeScope = null; // uiTreeNode Scope of parent node;
+        $scope.$childNodesScope = null; // uiTreeNodes Scope of child nodes.
+        $scope.$parentNodesScope = null; // uiTreeNodes Scope of parent nodes.
+        $scope.$treeScope = null; // uiTree scope
+        $scope.$handleScope = null; // it's handle scope
+        $scope.$type = 'uiTreeNode';
+        $scope.$$apply = false; //
+
+        $scope.collapsed = false;
+
+        $scope.init = function(controllersArr) {
+          var treeNodesCtrl = controllersArr[0];
+          $scope.$treeScope = controllersArr[1] ? controllersArr[1].scope : null;
+
+          // find the scope of it's parent node
+          $scope.$parentNodeScope = treeNodesCtrl.scope.$nodeScope;
+          // modelValue for current node
+          $scope.$modelValue = treeNodesCtrl.scope.$modelValue[$scope.$index];
+          $scope.$parentNodesScope = treeNodesCtrl.scope;
+          treeNodesCtrl.scope.initSubNode($scope); // init sub nodes
+
+          $element.on('$destroy', function() {
+            treeNodesCtrl.scope.destroySubNode($scope); // destroy sub nodes
+          });
+        };
+
+        $scope.index = function() {
+          return $scope.$parentNodesScope.$modelValue.indexOf($scope.$modelValue);
+        };
+
+        $scope.dragEnabled = function() {
+          return !($scope.$treeScope && !$scope.$treeScope.dragEnabled);
+        };
+
+        $scope.isSibling = function(targetNode) {
+          return $scope.$parentNodesScope == targetNode.$parentNodesScope;
+        };
+
+        $scope.isChild = function(targetNode) {
+          var nodes = $scope.childNodes();
+          return nodes && nodes.indexOf(targetNode) > -1;
+        };
+
+        $scope.prev = function() {
+          var index = $scope.index();
+          if (index > 0) {
+            return $scope.siblings()[index - 1];
+          }
+          return null;
+        };
+
+        $scope.siblings = function() {
+          return $scope.$parentNodesScope.childNodes();
+        };
+
+        $scope.childNodesCount = function() {
+          return $scope.childNodes() ? $scope.childNodes().length : 0;
+        };
+
+        $scope.hasChild = function() {
+          return $scope.childNodesCount() > 0;
+        };
+
+        $scope.childNodes = function() {
+          return $scope.$childNodesScope && $scope.$childNodesScope.$modelValue ?
+              $scope.$childNodesScope.childNodes() :
+              null;
+        };
+
+        $scope.accept = function(sourceNode, destIndex) {
+          return $scope.$childNodesScope &&
+                  $scope.$childNodesScope.$modelValue &&
+                  $scope.$childNodesScope.accept(sourceNode, destIndex);
+        };
+
+        $scope.removeNode = function(){
+          var node = $scope.remove();
+          $scope.$callbacks.removed(node);
+          return node;
+        };
+
+        $scope.remove = function() {
+          return $scope.$parentNodesScope.removeNode($scope);
+        };
+
+        $scope.toggle = function() {
+          $scope.collapsed = !$scope.collapsed;
+        };
+
+        $scope.collapse = function() {
+          $scope.collapsed = true;
+        };
+
+        $scope.expand = function() {
+          $scope.collapsed = false;
+        };
+
+        $scope.depth = function() {
+          var parentNode = $scope.$parentNodeScope;
+          if (parentNode) {
+            return parentNode.depth() + 1;
+          }
+          return 1;
+        };
+
+        var subDepth = 0;
+        var countSubDepth = function(scope) {
+          var count = 0;
+          var nodes = scope.childNodes();
+          for (var i = 0; i < nodes.length; i++) {
+            var childNodes = nodes[i].$childNodesScope;
+            if (childNodes) {
+              count = 1;
+              countSubDepth(childNodes);
+            }
+          }
+          subDepth += count;
+        };
+
+        $scope.maxSubDepth = function() {
+          subDepth = 0;
+          if ($scope.$childNodesScope) {
+            countSubDepth($scope.$childNodesScope);
+          }
+          return subDepth;
+        };
+
+      }
+    ]);
+})();
+
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+
+    .controller('TreeHandleController', ['$scope', '$element', '$attrs', 'treeConfig',
+      function ($scope, $element, $attrs, treeConfig) {
+        this.scope = $scope;
+
+        $scope.$element = $element;
+        $scope.$nodeScope = null;
+        $scope.$type = 'uiTreeHandle';
+
+      }
+    ]);
+})();
+
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+  .directive('uiTree', [ 'treeConfig', '$window',
+    function(treeConfig, $window) {
+      return {
+        restrict: 'A',
+        scope: true,
+        controller: 'TreeController',
+        link: function(scope, element, attrs) {
+          var callbacks = {
+            accept: null,
+            beforeDrag: null
+          };
+
+          var config = {};
+          angular.extend(config, treeConfig);
+          if (config.treeClass) {
+            element.addClass(config.treeClass);
+          }
+
+          scope.$emptyElm = angular.element($window.document.createElement('div'));
+          if (config.emptyTreeClass) {
+            scope.$emptyElm.addClass(config.emptyTreeClass);
+          }
+
+          scope.$watch('$nodesScope.$modelValue.length', function() {
+            if (scope.$nodesScope.$modelValue) {
+              scope.resetEmptyElement();
+            }
+          }, true);
+
+          scope.$watch(attrs.dragEnabled, function(val) {
+            if((typeof val) == "boolean") {
+              scope.dragEnabled = val;
+            }
+          });
+
+          scope.$watch(attrs.emptyPlaceHolderEnabled, function(val) {
+            if((typeof val) == "boolean") {
+              scope.emptyPlaceHolderEnabled = val;
+            }
+          });
+
+          scope.$watch(attrs.maxDepth, function(val) {
+            if((typeof val) == "number") {
+              scope.maxDepth = val;
+            }
+          });
+
+          scope.$watch(attrs.dragDelay, function(val) {
+            if((typeof val) == "number") {
+              scope.dragDelay = val;
+            }
+          });
+
+          // check if the dest node can accept the dragging node
+          // by default, we check the 'data-nodrop' attribute in `ui-tree-nodes`
+          // and the 'max-depth' attribute in `ui-tree` or `ui-tree-nodes`.
+          // the method can be overrided
+          callbacks.accept = function(sourceNodeScope, destNodesScope, destIndex) {
+            if (destNodesScope.nodrop || destNodesScope.outOfDepth(sourceNodeScope)) {
+              return false;
+            }
+            return true;
+          };
+
+          callbacks.beforeDrag = function(sourceNodeScope) {
+            return true;
+          };
+
+          callbacks.removed = function(node){
+          
+          };
+
+          callbacks.dropped = function(event) {
+
+          };
+
+          //
+          callbacks.dragStart = function(event) {
+
+          };
+
+          callbacks.dragMove = function(event) {
+
+          };
+
+          callbacks.dragStop = function(event) {
+
+          };
+
+          callbacks.beforeDrop = function(event) {
+
+          };
+
+          scope.$watch(attrs.uiTree, function(newVal, oldVal){
+            angular.forEach(newVal, function(value, key){
+              if (callbacks[key]) {
+                if (typeof value === "function") {
+                  callbacks[key] = value;
+                }
+              }
+            });
+
+            scope.$callbacks = callbacks;
+          }, true);
+
+
+        }
+      };
+    }
+  ]);
+})();
+
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+  .directive('uiTreeNodes', [ 'treeConfig', '$window',
+    function(treeConfig) {
+      return {
+        require: ['ngModel', '?^uiTreeNode', '^uiTree'],
+        restrict: 'A',
+        scope: true,
+        controller: 'TreeNodesController',
+        link: function(scope, element, attrs, controllersArr) {
+
+          var config = {};
+          angular.extend(config, treeConfig);
+          if (config.nodesClass) {
+            element.addClass(config.nodesClass);
+          }
+
+          var ngModel = controllersArr[0];
+          var treeNodeCtrl = controllersArr[1];
+          var treeCtrl = controllersArr[2];
+          if (treeNodeCtrl) {
+            treeNodeCtrl.scope.$childNodesScope = scope;
+            scope.$nodeScope = treeNodeCtrl.scope;
+          }
+          else { // find the root nodes if there is no parent node and have a parent ui-tree
+            treeCtrl.scope.$nodesScope = scope;
+          }
+          scope.$treeScope = treeCtrl.scope;
+
+          if (ngModel) {
+            ngModel.$render = function() {
+              if (!ngModel.$modelValue || !angular.isArray(ngModel.$modelValue)) {
+                scope.$modelValue = [];
+              }
+              scope.$modelValue = ngModel.$modelValue;
+            };
+          }
+
+          scope.$watch(attrs.maxDepth, function(val) {
+            if((typeof val) == "number") {
+              scope.maxDepth = val;
+            }
+          });
+
+          attrs.$observe('nodrop', function(val) {
+            scope.nodrop = ((typeof val) != "undefined");
+          });
+
+          attrs.$observe('horizontal', function(val) {
+            scope.horizontal = ((typeof val) != "undefined");
+          });
+
+        }
+      };
+    }
+  ]);
+})();
+
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+
+    .directive('uiTreeNode', ['treeConfig', '$uiTreeHelper', '$window', '$document','$timeout',
+      function (treeConfig, $uiTreeHelper, $window, $document, $timeout) {
+        return {
+          require: ['^uiTreeNodes', '^uiTree'],
+          restrict: 'A',
+          controller: 'TreeNodeController',
+          link: function(scope, element, attrs, controllersArr) {
+            var config = {};
+            angular.extend(config, treeConfig);
+            if (config.nodeClass) {
+              element.addClass(config.nodeClass);
+            }
+            scope.init(controllersArr);
+
+            scope.collapsed = !!$uiTreeHelper.getNodeAttribute(scope, 'collapsed');
+
+            scope.$watch(attrs.collapsed, function(val) {
+              if((typeof val) == "boolean") {
+                scope.collapsed = val;
+              }
+            });
+
+            scope.$watch('collapsed', function(val) {
+              $uiTreeHelper.setNodeAttribute(scope, 'collapsed', val);
+              attrs.$set('collapsed', val);
+            });
+
+            var hasTouch = 'ontouchstart' in window;
+            // todo startPos is unused
+            var startPos, firstMoving, dragInfo, pos;
+            var placeElm, hiddenPlaceElm, dragElm;
+            var treeScope = null;
+            var elements; // As a parameter for callbacks
+            var dragDelaying = true;
+            var dragStarted = false;
+            var dragTimer = null;
+            var body = document.body,
+                html = document.documentElement,
+                document_height,
+                document_width;
+
+            var dragStart = function(e) {
+              if (!hasTouch && (e.button == 2 || e.which == 3)) {
+                // disable right click
+                return;
+              }
+              if (e.uiTreeDragging || (e.originalEvent && e.originalEvent.uiTreeDragging)) { // event has already fired in other scope.
+                return;
+              }
+
+              // the element which is clicked.
+              var eventElm = angular.element(e.target);
+              var eventScope = eventElm.scope();
+              if (!eventScope || !eventScope.$type) {
+                return;
+              }
+              if (eventScope.$type != 'uiTreeNode'
+                && eventScope.$type != 'uiTreeHandle') { // Check if it is a node or a handle
+                return;
+              }
+              if (eventScope.$type == 'uiTreeNode'
+                && eventScope.$handleScope) { // If the node has a handle, then it should be clicked by the handle
+                return;
+              }
+
+              var eventElmTagName = eventElm.prop('tagName').toLowerCase();
+              if (eventElmTagName == 'input' ||
+                eventElmTagName == 'textarea' ||
+                eventElmTagName == 'button' ||
+                eventElmTagName == 'select') { // if it's a input or button, ignore it
+                return;
+              }
+
+              // check if it or it's parents has a 'data-nodrag' attribute
+              while (eventElm && eventElm[0] && eventElm[0] != element) {
+                if ($uiTreeHelper.nodrag(eventElm)) { // if the node mark as `nodrag`, DONOT drag it.
+                  return;
+                }
+                eventElm = eventElm.parent();
+              }
+
+              if (!scope.beforeDrag(scope)){
+                return;
+              }
+
+              e.uiTreeDragging = true; // stop event bubbling
+              if (e.originalEvent) {
+                e.originalEvent.uiTreeDragging = true;
+              }
+              e.preventDefault();
+              var eventObj = $uiTreeHelper.eventObj(e);
+
+              firstMoving = true;
+              dragInfo = $uiTreeHelper.dragInfo(scope);
+
+              var tagName = scope.$element.prop('tagName');
+              if (tagName.toLowerCase() === 'tr') {
+                placeElm = angular.element($window.document.createElement(tagName));
+                var tdElm = angular.element($window.document.createElement('td'))
+                              .addClass(config.placeHolderClass);
+                placeElm.append(tdElm);
+              } else {
+                placeElm = angular.element($window.document.createElement(tagName))
+                              .addClass(config.placeHolderClass);
+              }
+              hiddenPlaceElm = angular.element($window.document.createElement(tagName));
+              if (config.hiddenClass) {
+                hiddenPlaceElm.addClass(config.hiddenClass);
+              }
+              pos = $uiTreeHelper.positionStarted(eventObj, scope.$element);
+              placeElm.css('height', $uiTreeHelper.height(scope.$element) + 'px');
+              placeElm.css('width', $uiTreeHelper.width(scope.$element) + 'px');
+              dragElm = angular.element($window.document.createElement(scope.$parentNodesScope.$element.prop('tagName')))
+                        .addClass(scope.$parentNodesScope.$element.attr('class')).addClass(config.dragClass);
+              dragElm.css('width', $uiTreeHelper.width(scope.$element) + 'px');
+              dragElm.css('z-index', 9999);
+
+              // Prevents cursor to change rapidly in Opera 12.16 and IE when dragging an element
+              var hStyle = (scope.$element[0].querySelector('.angular-ui-tree-handle') || scope.$element[0]).currentStyle;
+              if (hStyle) {
+                document.body.setAttribute('ui-tree-cursor', $document.find('body').css('cursor') || '');
+                $document.find('body').css({'cursor': hStyle.cursor + '!important'});
+              }
+
+              scope.$element.after(placeElm);
+              scope.$element.after(hiddenPlaceElm);
+              dragElm.append(scope.$element);
+              $document.find('body').append(dragElm);
+              dragElm.css({
+                'left' : eventObj.pageX - pos.offsetX + 'px',
+                'top'  : eventObj.pageY - pos.offsetY + 'px'
+              });
+              elements = {
+                placeholder: placeElm,
+                dragging: dragElm
+              };
+
+              angular.element($document).bind('touchend', dragEndEvent);
+              angular.element($document).bind('touchcancel', dragEndEvent);
+              angular.element($document).bind('touchmove', dragMoveEvent);
+              angular.element($document).bind('mouseup', dragEndEvent);
+              angular.element($document).bind('mousemove', dragMoveEvent);
+              angular.element($document).bind('mouseleave', dragCancelEvent);
+
+              document_height = Math.max(body.scrollHeight, body.offsetHeight, html.clientHeight, html.scrollHeight, html.offsetHeight);
+              document_width = Math.max(body.scrollWidth, body.offsetWidth, html.clientWidth, html.scrollWidth, html.offsetWidth);
+            };
+
+            var dragMove = function(e) {
+              if (!dragStarted) {
+                if (!dragDelaying) {
+                  dragStarted = true;
+                  scope.$apply(function() {
+                    scope.$callbacks.dragStart(dragInfo.eventArgs(elements, pos));
+                  });
+                }
+                return;
+              }
+
+              var eventObj = $uiTreeHelper.eventObj(e);
+              var prev, leftElmPos, topElmPos;
+
+              if (dragElm) {
+                e.preventDefault();
+
+                if ($window.getSelection) {
+                  $window.getSelection().removeAllRanges();
+                } else if ($window.document.selection) {
+                  $window.document.selection.empty();
+                }
+
+                leftElmPos = eventObj.pageX - pos.offsetX;
+                topElmPos = eventObj.pageY - pos.offsetY;
+
+                //dragElm can't leave the screen on the left
+                if(leftElmPos < 0){
+                  leftElmPos = 0;
+                }
+
+                //dragElm can't leave the screen on the top
+                if(topElmPos < 0){
+                  topElmPos = 0;
+                }
+
+                //dragElm can't leave the screen on the bottom
+                if ((topElmPos + 10) > document_height){
+                  topElmPos = document_height - 10;
+                }
+
+                //dragElm can't leave the screen on the right
+                if((leftElmPos + 10) > document_width) {
+                  leftElmPos = document_width - 10;
+                }
+
+                dragElm.css({
+                  'left': leftElmPos + 'px',
+                  'top': topElmPos + 'px'
+                });
+
+                var top_scroll = window.pageYOffset || $window.document.documentElement.scrollTop;
+                var bottom_scroll = top_scroll + (window.innerHeight || $window.document.clientHeight || $window.document.clientHeight);
+
+                // to scroll down if cursor y-position is greater than the bottom position the vertical scroll
+                if (bottom_scroll < eventObj.pageY && bottom_scroll <= document_height) {
+                  window.scrollBy(0, 10);
+                }
+
+                // to scroll top if cursor y-position is less than the top position the vertical scroll
+                if (top_scroll > eventObj.pageY) {
+                  window.scrollBy(0, -10);
+                }
+
+                $uiTreeHelper.positionMoved(e, pos, firstMoving);
+                if (firstMoving) {
+                  firstMoving = false;
+                  return;
+                }
+
+                // move horizontal
+                if (pos.dirAx && pos.distAxX >= config.levelThreshold) {
+                  pos.distAxX = 0;
+
+                  // increase horizontal level if previous sibling exists and is not collapsed
+                  if (pos.distX > 0) {
+                    prev = dragInfo.prev();
+                    if (prev && !prev.collapsed
+                      && prev.accept(scope, prev.childNodesCount())) {
+                      prev.$childNodesScope.$element.append(placeElm);
+                      dragInfo.moveTo(prev.$childNodesScope, prev.childNodes(), prev.childNodesCount());
+                    }
+                  }
+
+                  // decrease horizontal level
+                  if (pos.distX < 0) {
+                    // we can't decrease a level if an item preceeds the current one
+                    var next = dragInfo.next();
+                    if (!next) {
+                      var target = dragInfo.parentNode(); // As a sibling of it's parent node
+                      if (target
+                        && target.$parentNodesScope.accept(scope, target.index() + 1)) {
+                        target.$element.after(placeElm);
+                        dragInfo.moveTo(target.$parentNodesScope, target.siblings(), target.index() + 1);
+                      }
+                    }
+                  }
+                }
+
+                // check if add it as a child node first
+                // todo decrease is unused
+                var decrease = ($uiTreeHelper.offset(dragElm).left - $uiTreeHelper.offset(placeElm).left) >= config.threshold;
+                var targetX = eventObj.pageX - $window.document.body.scrollLeft;
+                var targetY = eventObj.pageY - (window.pageYOffset || $window.document.documentElement.scrollTop);
+
+                // Select the drag target. Because IE does not support CSS 'pointer-events: none', it will always
+                // pick the drag element itself as the target. To prevent this, we hide the drag element while
+                // selecting the target.
+                var displayElm;
+                if (angular.isFunction(dragElm.hide)) {
+                  dragElm.hide();
+                }else{
+                  displayElm = dragElm[0].style.display;
+                  dragElm[0].style.display = "none";
+                }
+
+                // when using elementFromPoint() inside an iframe, you have to call
+                // elementFromPoint() twice to make sure IE8 returns the correct value
+                $window.document.elementFromPoint(targetX, targetY);
+
+                var targetElm = angular.element($window.document.elementFromPoint(targetX, targetY));
+                if (angular.isFunction(dragElm.show)) {
+                  dragElm.show();
+                }else{
+                  dragElm[0].style.display = displayElm;
+                }
+
+                // move vertical
+                if (!pos.dirAx) {
+                  var targetBefore, targetNode;
+                  // check it's new position
+                  targetNode = targetElm.scope();
+                  var isEmpty = false;
+                  if (!targetNode) {
+                    return;
+                  }
+                  if (targetNode.$type == 'uiTree' && targetNode.dragEnabled) {
+                    isEmpty = targetNode.isEmpty(); // Check if it's empty tree
+                  }
+                  if (targetNode.$type == 'uiTreeHandle') {
+                    targetNode = targetNode.$nodeScope;
+                  }
+                  if (targetNode.$type != 'uiTreeNode'
+                    && !isEmpty) { // Check if it is a uiTreeNode or it's an empty tree
+                    return;
+                  }
+
+                  // if placeholder move from empty tree, reset it.
+                  if (treeScope && placeElm.parent()[0] != treeScope.$element[0]) {
+                    treeScope.resetEmptyElement();
+                    treeScope = null;
+                  }
+
+                  if (isEmpty) { // it's an empty tree
+                    treeScope = targetNode;
+                    if (targetNode.$nodesScope.accept(scope, 0)) {
+                      targetNode.place(placeElm);
+                      dragInfo.moveTo(targetNode.$nodesScope, targetNode.$nodesScope.childNodes(), 0);
+                    }
+                  } else if (targetNode.dragEnabled()){ // drag enabled
+                    targetElm = targetNode.$element; // Get the element of ui-tree-node
+                    var targetOffset = $uiTreeHelper.offset(targetElm);
+                    targetBefore = targetNode.horizontal ? eventObj.pageX < (targetOffset.left + $uiTreeHelper.width(targetElm) / 2)
+                                                         : eventObj.pageY < (targetOffset.top + $uiTreeHelper.height(targetElm) / 2);
+
+                    if (targetNode.$parentNodesScope.accept(scope, targetNode.index())) {
+                      if (targetBefore) {
+                        targetElm[0].parentNode.insertBefore(placeElm[0], targetElm[0]);
+                        dragInfo.moveTo(targetNode.$parentNodesScope, targetNode.siblings(), targetNode.index());
+                      } else {
+                        targetElm.after(placeElm);
+                        dragInfo.moveTo(targetNode.$parentNodesScope, targetNode.siblings(), targetNode.index() + 1);
+                      }
+                    }
+                    else if (!targetBefore && targetNode.accept(scope, targetNode.childNodesCount())) { // we have to check if it can add the dragging node as a child
+                      targetNode.$childNodesScope.$element.append(placeElm);
+                      dragInfo.moveTo(targetNode.$childNodesScope, targetNode.childNodes(), targetNode.childNodesCount());
+                    }
+                  }
+
+                }
+
+                scope.$apply(function() {
+                  scope.$callbacks.dragMove(dragInfo.eventArgs(elements, pos));
+                });
+              }
+            };
+
+            var dragEnd = function(e) {
+              e.preventDefault();
+
+              if (dragElm) {
+                scope.$treeScope.$apply(function() {
+                  scope.$callbacks.beforeDrop(dragInfo.eventArgs(elements, pos));
+                });
+                // roll back elements changed
+                hiddenPlaceElm.replaceWith(scope.$element);
+                placeElm.remove();
+
+                dragElm.remove();
+                dragElm = null;
+                if (scope.$$apply) {
+                  dragInfo.apply();
+                  scope.$treeScope.$apply(function() {
+                    scope.$callbacks.dropped(dragInfo.eventArgs(elements, pos));
+                  });
+                } else {
+                  bindDrag();
+                }
+                scope.$treeScope.$apply(function() {
+                  scope.$callbacks.dragStop(dragInfo.eventArgs(elements, pos));
+                });
+                scope.$$apply = false;
+                dragInfo = null;
+
+              }
+
+              // Restore cursor in Opera 12.16 and IE
+              var oldCur = document.body.getAttribute('ui-tree-cursor');
+              if (oldCur !== null) {
+                $document.find('body').css({'cursor': oldCur});
+                document.body.removeAttribute('ui-tree-cursor');
+              }
+
+              angular.element($document).unbind('touchend', dragEndEvent); // Mobile
+              angular.element($document).unbind('touchcancel', dragEndEvent); // Mobile
+              angular.element($document).unbind('touchmove', dragMoveEvent); // Mobile
+              angular.element($document).unbind('mouseup', dragEndEvent);
+              angular.element($document).unbind('mousemove', dragMoveEvent);
+              angular.element($window.document.body).unbind('mouseleave', dragCancelEvent);
+            };
+
+            var dragStartEvent = function(e) {
+              if (scope.dragEnabled()) {
+                dragStart(e);
+              }
+            };
+
+            var dragMoveEvent = function(e) {
+              dragMove(e);
+            };
+
+            var dragEndEvent = function(e) {
+              scope.$$apply = true;
+              dragEnd(e);
+            };
+
+            var dragCancelEvent = function(e) {
+              dragEnd(e);
+            };
+
+            var bindDrag = function() {
+              element.bind('touchstart mousedown', function (e) {
+                dragDelaying = true;
+                dragStarted = false;
+                dragStartEvent(e);
+                dragTimer = $timeout(function(){dragDelaying = false;}, scope.dragDelay);
+              });
+              element.bind('touchend touchcancel mouseup',function(){$timeout.cancel(dragTimer);});
+            };
+            bindDrag();
+
+            angular.element($window.document.body).bind("keydown", function(e) {
+              if (e.keyCode == 27) {
+                scope.$$apply = false;
+                dragEnd(e);
+              }
+            });
+          }
+        };
+      }
+    ]);
+
+})();
+
+(function () {
+  'use strict';
+
+  angular.module('ui.tree')
+  .directive('uiTreeHandle', [ 'treeConfig', '$window',
+    function(treeConfig) {
+      return {
+        require: '^uiTreeNode',
+        restrict: 'A',
+        scope: true,
+        controller: 'TreeHandleController',
+        link: function(scope, element, attrs, treeNodeCtrl) {
+          var config = {};
+          angular.extend(config, treeConfig);
+          if (config.handleClass) {
+            element.addClass(config.handleClass);
+          }
+          // connect with the tree node.
+          if (scope != treeNodeCtrl.scope) {
+            scope.$nodeScope = treeNodeCtrl.scope;
+            treeNodeCtrl.scope.$handleScope = scope;
+          }
+        }
+      };
+    }
+  ]);
+})();
 
 //! moment.js
 //! version : 2.8.4
@@ -36258,9 +37624,11 @@ angular.module("ang-drag-drop",[])
     }
 }).call(this);
 
-/* angular-moment.js / v0.8.2 / (c) 2013, 2014 Uri Shaked / MIT Licence */
+/* angular-moment.js / v0.8.3 / (c) 2013, 2014 Uri Shaked / MIT Licence */
 
-/* global define */
+'format global'; /* global define */
+'deps angular';
+'deps moment';
 
 (function () {
 	'use strict';
@@ -36361,7 +37729,19 @@ angular.module("ang-drag-drop",[])
 				 * If set, time ago will be calculated relative to the given value.
 				 * If null, local time will be used. Defaults to null.
 				 */
-				serverTime: null
+				serverTime: null,
+
+				/**
+				 * @ngdoc property
+				 * @name angularMoment.config.amTimeAgoConfig#format
+				 * @propertyOf angularMoment.config:amTimeAgoConfig
+				 * @returns {string} The format of the date to be displayed in the title of the element. If null,
+				 * 		the directive set the title of the element.
+				 *
+				 * @description
+				 * Specify the format of the date when displayed. null by default.
+				 */
+				titleFormat: null
 			})
 
 		/**
@@ -36378,6 +37758,7 @@ angular.module("ang-drag-drop",[])
 					var currentValue;
 					var currentFormat = angularMomentConfig.format;
 					var withoutSuffix = amTimeAgoConfig.withoutSuffix;
+					var titleFormat = amTimeAgoConfig.titleFormat;
 					var localDate = new Date().getTime();
 					var preprocess = angularMomentConfig.preprocess;
 					var modelName = attr.amTimeAgo.replace(/^::/, '');
@@ -36407,6 +37788,11 @@ angular.module("ang-drag-drop",[])
 
 					function updateTime(momentInstance) {
 						element.text(momentInstance.from(getNow(), withoutSuffix));
+
+						if (titleFormat && !element.attr('title')) {
+							element.attr('title', momentInstance.local().format(titleFormat));
+						}
+
 						if (!isBindOnce) {
 
 							var howOld = Math.abs(getNow().diff(momentInstance, 'minute'));
@@ -36664,11 +38050,35 @@ angular.module("ang-drag-drop",[])
 
 					return moment.duration(value, format).humanize(suffix);
 				};
-			}]);
+			}])
+
+		/**
+		 * @ngdoc filter
+		 * @name angularMoment.filter:amTimeAgo
+		 * @module angularMoment
+		 * @function
+		 */
+			.filter('amTimeAgo', ['moment', 'amMoment', function (moment, amMoment) {
+					return function (value, preprocess, suffix) {
+						if (typeof value === 'undefined' || value === null) {
+							return '';
+						}
+
+						value = amMoment.preprocessDate(value, preprocess);
+						var date = moment(value);
+						if (!date.isValid()) {
+							return '';
+						}
+
+						return amMoment.applyTimezone(date).fromNow(suffix);
+					};
+				}]);
 	}
 
 	if (typeof define === 'function' && define.amd) {
 		define('angular-moment', ['angular', 'moment'], angularMoment);
+	} else if (typeof module !== 'undefined' && module && module.exports) {
+		angularMoment(angular, require('moment'));
 	} else {
 		angularMoment(angular, window.moment);
 	}
@@ -42344,6 +43754,59 @@ Github: https://github.com/angular-gantt/angular-gantt.git
 
 (function(){
     'use strict';
+    angular.module('gantt.tree', ['gantt', 'gantt.tree.templates', 'ui.tree']).directive('ganttTree', ['ganttUtils', '$compile', '$document', function(utils, $compile, $document) {
+        // Provides the row sort functionality to any Gantt row
+        // Uses the sortableState to share the current row
+
+        return {
+            restrict: 'E',
+            require: '^gantt',
+            scope: {
+                enabled: '=?',
+                header: '=?'
+            },
+            link: function(scope, element, attrs, ganttCtrl) {
+                var api = ganttCtrl.gantt.api;
+
+                // Load options from global options attribute.
+                if (scope.options && typeof(scope.options.sortable) === 'object') {
+                    for (var option in scope.options.sortable) {
+                        scope[option] = scope.options[option];
+                    }
+                }
+
+                if (scope.enabled === undefined) {
+                    scope.enabled = true;
+                }
+
+                if (scope.header === undefined) {
+                    scope.header = 'Name';
+                }
+
+                api.directives.on.new(scope, function(directiveName, sideContentScope, sideContentElement) {
+                    if (directiveName === 'ganttSideContent') {
+                        var labelsScope = sideContentScope.$new();
+                        labelsScope.pluginScope = scope;
+
+                        var ifElement = $document[0].createElement('div');
+                        angular.element(ifElement).attr('data-ng-if', 'pluginScope.enabled');
+
+                        var labelsElement = $document[0].createElement('gantt-side-content-tree');
+                        angular.element(ifElement).append(labelsElement);
+
+                        sideContentElement.append($compile(ifElement)(labelsScope));
+                    }
+                });
+
+
+            }
+        };
+    }]);
+}());
+
+
+(function(){
+    'use strict';
     angular.module('gantt.bounds').directive('ganttTaskBounds', ['$templateCache', 'moment', function($templateCache, moment) {
         // Displays a box representing the earliest allowable start time and latest completion time for a job
 
@@ -42741,6 +44204,178 @@ Github: https://github.com/angular-gantt/angular-gantt.git
 }());
 
 
+(function(){
+    'use strict';
+    angular.module('gantt.tree').directive('ganttRowTreeLabel', ['GanttDirectiveBuilder', function(Builder) {
+        var builder = new Builder('ganttRowTreeLabel');
+        builder.restrict = 'A';
+        builder.templateUrl = undefined;
+        return builder.build();
+    }]);
+}());
+
+
+(function(){
+    'use strict';
+    angular.module('gantt.tree').directive('ganttSideContentTree', ['GanttDirectiveBuilder', function(Builder) {
+        var builder = new Builder('ganttSideContentTree', 'plugins/tree/sideContentTree.tmpl.html');
+        return builder.build();
+    }]);
+}());
+
+
+(function(){
+    'use strict';
+    angular.module('gantt.tree').controller('GanttTreeController', ['$scope', function($scope) {
+        $scope.rootRows = [];
+
+        var nameToRow = {};
+        var idToRow = {};
+
+        var nameToChildren = {};
+        var idToChildren = {};
+
+        var nameToParent = {};
+        var idToParent = {};
+
+        var registerChildRow = function(row, childRow) {
+            if (childRow !== undefined) {
+                var nameChildren = nameToChildren[row.model.name];
+                if (nameChildren === undefined) {
+                    nameChildren = [];
+                    nameToChildren[row.model.name] = nameChildren;
+                }
+                nameChildren.push(childRow);
+
+
+                var idChildren = idToChildren[row.model.id];
+                if (idChildren === undefined) {
+                    idChildren = [];
+                    idToChildren[row.model.id] = idChildren;
+                }
+                idChildren.push(childRow);
+
+                nameToParent[childRow.model.name] = childRow;
+                idToParent[childRow.model.id] = childRow;
+            }
+        };
+
+        var updateHierarchy = function() {
+            nameToRow = {};
+            idToRow = {};
+
+            nameToChildren = {};
+            idToChildren = {};
+
+            nameToParent = {};
+            idToParent = {};
+
+            angular.forEach($scope.gantt.rowsManager.visibleRows, function(row) {
+                nameToRow[row.model.name] = row;
+                idToRow[row.model.id] = row;
+            });
+
+            angular.forEach($scope.gantt.rowsManager.visibleRows, function(row) {
+                if (row.model.parent !== undefined) {
+                    var parentRow = nameToRow[row.model.parent];
+                    if (parentRow === undefined) {
+                        parentRow = idToRow[row.model.id];
+                    }
+
+                    if (parentRow !== undefined) {
+                        registerChildRow(parentRow, row);
+                    }
+                }
+
+                if (row.model.children !== undefined) {
+                    angular.forEach(row.model.children, function(childRowNameOrId) {
+                        var childRow = nameToRow[childRowNameOrId];
+                        if (childRow === undefined) {
+                            childRow = idToRow[childRowNameOrId];
+                        }
+
+                        if (childRow !== undefined) {
+                            registerChildRow(row, childRow);
+                        }
+                    });
+                }
+            });
+
+            $scope.rootRows = [];
+            angular.forEach($scope.gantt.rowsManager.visibleRows, function(row) {
+                if ($scope.parent(row) === undefined) {
+                    $scope.rootRows.push(row);
+                }
+            });
+        };
+
+        $scope.$watchCollection('gantt.rowsManager.visibleRows', function() {
+            updateHierarchy();
+        });
+
+        $scope.children = function(row) {
+            if (row === undefined) {
+                return $scope.rootRows;
+            }
+            var children = idToChildren[row.model.id];
+            if (children === undefined) {
+                children = nameToChildren[row.model.name];
+            }
+            return children;
+        };
+
+        $scope.parent = function(row) {
+            var parent = idToParent[row.model.id];
+            if (parent === undefined) {
+                parent = nameToParent[row.model.name];
+            }
+            return parent;
+        };
+
+        $scope.toggle = function(scope) {
+            scope.toggle();
+        };
+    }]).controller('GanttTreeChildrenController', ['$scope', function($scope) {
+        $scope.$watch('children(row)', function(newValue) {
+            $scope.$parent.childrenRows = newValue;
+        });
+    }]);
+}());
+
+
+(function(){
+    'use strict';
+    angular.module('gantt.tree').directive('ganttTreeBody', ['GanttDirectiveBuilder', 'ganttLayout', function(Builder, layout) {
+        var builder = new Builder('ganttTreeBody', 'plugins/tree/treeBody.tmpl.html');
+        builder.controller = function($scope) {
+            var hScrollBarHeight = layout.getScrollBarHeight();
+
+            $scope.getLabelsCss = function() {
+                var css = {};
+
+                if ($scope.maxHeight) {
+                    var bodyScrollBarHeight = $scope.gantt.scroll.isHScrollbarVisible() ? hScrollBarHeight : 0;
+                    css['max-height'] = $scope.maxHeight - bodyScrollBarHeight - $scope.gantt.header.getHeight() + 'px';
+                }
+
+                return css;
+            };
+        };
+        return builder.build();
+    }]);
+}());
+
+
+
+(function(){
+    'use strict';
+    angular.module('gantt.tree').directive('ganttTreeHeader', ['GanttDirectiveBuilder', function(Builder) {
+        var builder = new Builder('ganttTreeHeader', 'plugins/tree/treeHeader.tmpl.html');
+        return builder.build();
+    }]);
+}());
+
+
 angular.module('gantt.bounds.templates', []).run(['$templateCache', function($templateCache) {
     $templateCache.put('plugins/bounds/taskBounds.tmpl.html',
         '<div ng-cloak class="gantt-task-bounds" ng-style="getCss()" ng-class="getClass()"></div>\n' +
@@ -42825,31 +44460,38 @@ angular.module('gantt.tree.templates', []).run(['$templateCache', function($temp
         '');
     $templateCache.put('plugins/tree/treeBody.tmpl.html',
         '<div class="gantt-tree-body" ng-style="getLabelsCss()">\n' +
-        '    <div gantt-vertical-scroll-receiver gantt-tree-controller>\n' +
+        '    <div gantt-vertical-scroll-receiver ng-controller="GanttTreeController">\n' +
         '        <div ui-tree>\n' +
-        '            <ol ui-tree-nodes ng-model="visibleRowsHierarchy">\n' +
-        '                <li ng-repeat="row in visibleRowsHierarchy track by row.model.id" ui-tree-node>\n' +
-        '                    <div ui-tree-handle\n' +
-        '                         class="gantt-row-label gantt-row-height"\n' +
-        '                         ng-class-odd="\'gantt-background-row\'"\n' +
-        '                         ng-class-even="\'gantt-background-row-alt\'"\n' +
-        '                         ng-class="row.model.classes"\n' +
-        '                         ng-style="{\'background-color\': row.model.color, \'height\': row.model.height}">\n' +
-        '                        <div class="valign-container">\n' +
-        '                            <div class="valign-content">\n' +
-        '                                <a data-nodrag class="btn btn-xs" ng-click="toggle(this)">\n' +
-        '                                    <span class="gantt-tree-handle glyphicon glyphicon-chevron-down"\n' +
-        '                                          ng-class="{\'glyphicon-chevron-right\': collapsed, \'glyphicon-chevron-down\': !collapsed}"></span>\n' +
-        '                                </a>\n' +
-        '                                <span>{{row.model.name}}</span>\n' +
-        '                            </div>\n' +
-        '                        </div>\n' +
-        '                    </div>\n' +
+        '            <ol class="gantt-tree-root" ui-tree-nodes ng-model="rootRows">\n' +
+        '                <li ng-repeat="row in rootRows track by row.model.id" ui-tree-node ng-include="\'plugins/tree/treeBodyChildren.tmpl.html\'">\n' +
         '                </li>\n' +
         '            </ol>\n' +
         '        </div>\n' +
         '    </div>\n' +
         '</div>\n' +
+        '');
+    $templateCache.put('plugins/tree/treeBodyChildren.tmpl.html',
+        '<div ui-tree-handle\n' +
+        '     ng-controller="GanttTreeChildrenController"\n' +
+        '     class="gantt-row-label gantt-row-height"\n' +
+        '     ng-class-odd="\'gantt-background-row\'"\n' +
+        '     ng-class-even="\'gantt-background-row-alt\'"\n' +
+        '     ng-class="row.model.classes"\n' +
+        '     ng-style="{\'background-color\': row.model.color, \'height\': row.model.height}">\n' +
+        '    <div class="valign-container">\n' +
+        '        <div class="valign-content">\n' +
+        '            <a data-nodrag class="btn btn-xs" ng-click="toggle(this)">\n' +
+        '                                    <span class="gantt-tree-handle glyphicon glyphicon-chevron-down"\n' +
+        '                                          ng-class="{\'glyphicon-chevron-right\': collapsed, \'glyphicon-chevron-down\': !collapsed}"></span>\n' +
+        '            </a>\n' +
+        '            <span>{{row.model.name}}</span>\n' +
+        '        </div>\n' +
+        '    </div>\n' +
+        '</div>\n' +
+        '<ol ui-tree-nodes ng-model="childrenRows">\n' +
+        '    <li ng-repeat="row in childrenRows track by row.model.id" ui-tree-node ng-include="\'plugins/tree/treeBodyChildren.tmpl.html\'">\n' +
+        '    </li>\n' +
+        '</ol>\n' +
         '');
     $templateCache.put('plugins/tree/treeHeader.tmpl.html',
         '<div class="gantt-tree-header">\n' +
