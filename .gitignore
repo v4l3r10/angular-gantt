@@ -11,3 +11,4 @@
 /assets/*.map
 *.log
 /.bowerrc
+/assets/*.min.*
